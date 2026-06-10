@@ -1,0 +1,185 @@
+{
+  "basic": {
+    "description": "常用设置",
+    "type": "object",
+    "items": {
+      "username": {
+        "description": "统一认证用户名",
+        "type": "string",
+        "default": ""
+      },
+      "password": {
+        "description": "统一认证密码",
+        "type": "string",
+        "default": ""
+      },
+      "pta_enabled": {
+        "description": "启用 PTA 待办",
+        "type": "bool",
+        "default": true
+      },
+      "class_reminder_offsets_minutes": {
+        "description": "课前提醒时间/min（用逗号分割）",
+        "type": "string",
+        "default": "30"
+      },
+      "exam_reminder_offsets_minutes": {
+        "description": "考前提醒时间/min（用逗号分割）",
+        "type": "string",
+        "default": "1440,180,30"
+      },
+      "task_reminder_offsets_minutes": {
+        "description": "任务截止前提醒时间/min（用逗号分割）",
+        "type": "string",
+        "default": "1440,180,30"
+      },
+      "bound_sessions": {
+        "description": "固定提醒会话",
+        "type": "text",
+        "default": ""
+      },
+      "bound_sessions_only": {
+        "description": "只提醒绑定会话",
+        "type": "bool",
+        "default": true
+      }
+    }
+  },
+  "advanced": {
+    "description": "高级设置",
+    "type": "object",
+    "items": {
+      "auto_calendar_enabled": {
+        "description": "自动获取校历",
+        "hint": "开启后会自动尝试获取校历，如果遇到问题可以关闭，手动填写当前学年和各学期开始日期。",
+        "type": "bool",
+        "default": true
+      },
+      "manual_calendar_year": {
+        "description": "当前学年",
+        "type": "string",
+        "default": "2025-2026",
+        "condition": {
+          "auto_calendar_enabled": false
+        }
+      },
+      "manual_autumn_begin": {
+        "description": "秋学期开始日期",
+        "type": "string",
+        "default": "2025-09-15",
+        "condition": {
+          "auto_calendar_enabled": false
+        }
+      },
+      "manual_winter_begin": {
+        "description": "冬学期开始日期",
+        "type": "string",
+        "default": "2025-11-10",
+        "condition": {
+          "auto_calendar_enabled": false
+        }
+      },
+      "manual_spring_begin": {
+        "description": "春学期开始日期",
+        "type": "string",
+        "default": "2026-03-02",
+        "condition": {
+          "auto_calendar_enabled": false
+        }
+      },
+      "manual_summer_begin": {
+        "description": "夏学期开始日期",
+        "type": "string",
+        "default": "2026-04-27",
+        "condition": {
+          "auto_calendar_enabled": false
+        }
+      },
+      "cache_ttl_minutes": {
+        "description": "DDL 数据刷新间隔/min",
+        "type": "int",
+        "default": 30
+      },
+      "class_horizon_days": {
+        "description": "课表展开天数",
+        "type": "int",
+        "default": 21
+      },
+      "task_horizon_days": {
+        "description": "任务保留天数",
+        "type": "int",
+        "default": 45
+      },
+      "chat_provider_id": {
+        "description": "默认模型 ID",
+        "type": "string",
+        "default": ""
+      },
+      "llm_reminder_enabled": {
+        "description": "使用 AI 生成提醒",
+        "type": "bool",
+        "default": true
+      },
+      "reminder_provider_id": {
+        "description": "提醒生成模型 ID",
+        "type": "string",
+        "default": ""
+      },
+      "llm_reminder_max_chars": {
+        "description": "AI 提醒最大字数",
+        "type": "int",
+        "default": 260
+      },
+      "use_astrbot_persona_prompt": {
+        "description": "提醒使用机器人默认人设",
+        "type": "bool",
+        "default": true
+      },
+      "persona_prompt_override": {
+        "description": "提醒人设提示词覆盖",
+        "type": "text",
+        "default": ""
+      },
+      "render_query_as_image": {
+        "description": "查询结果渲染为图片",
+        "type": "bool",
+        "default": true
+      },
+      "query_image_font_path": {
+        "description": "查询图片字体路径（相对路径按插件目录解析）",
+        "type": "string",
+        "default": "assets/fonts/NotoSansCJK-Regular.ttc"
+      },
+      "query_image_width": {
+        "description": "查询图片宽度",
+        "type": "int",
+        "default": 760
+      },
+      "query_image_font_size": {
+        "description": "查询图片字号",
+        "type": "int",
+        "default": 26
+      },
+      "query_image_split_after_items": {
+        "description": "超过多少项拆成两张图",
+        "type": "int",
+        "default": 10
+      },
+      "auto_refresh_enabled": {
+        "description": "自动刷新学业数据",
+        "type": "bool",
+        "default": true
+      },
+      "loop_interval_seconds": {
+        "description": "提醒检查间隔/s",
+        "type": "int",
+        "default": 45
+      },
+      "timezone": {
+        "description": "时区",
+        "type": "string",
+        "default": "Asia/Shanghai"
+      }
+    }
+  }
+}
