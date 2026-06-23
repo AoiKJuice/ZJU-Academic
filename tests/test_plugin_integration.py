@@ -1,0 +1,170 @@
+import asyncio
+import unittest
+from datetime import datetime, timedelta, timezone
+
+from academic_core.models import SourceResult, SourceStatus, migrate_cache
+from academic_core.plugin_integration import AcademicPluginRuntime, run_background_tick
+
+
+NOW = datetime(2026, 6, 22, 12, 0, tzinfo=timezone(timedelta(hours=8)))
+
+
+class SourceFailure(RuntimeError):
+    def __init__(self, code, user_message):
+        super().__init__(user_message)
+        self.code = code
+        self.user_message = user_message
+
+
+class PluginIntegrationTest(unittest.TestCase):
+    def test_startup_migrates_legacy_cache_and_preserves_events(self):
+        runtime = AcademicPluginRuntime(
+            {
+                "academic_refresh": "2026-06-20T10:53:00+08:00",
+                "task_refresh": "2026-06-20T22:25:00+08:00",
+                "class_events": [{"id": "class-1"}],
+                "exam_events": [{"id": "exam-1"}],
+                "task_events": [{"id": "task-1"}],
+            },
+            now_provider=lambda: NOW,
+        )
+
+        self.assertEqual(runtime.cache["class_events"], [{"id": "class-1"}])
+        self.assertEqual(runtime.cache["exam_events"], [{"id": "exam-1"}])
+        self.assertEqual(runtime.cache["task_events"], [{"id": "task-1"}])
+        self.assertEqual(runtime.cache["schema_version"], 2)
+
+    def test_schedule_failure_does_not_block_exams_or_tasks(self):
+        runtime = AcademicPluginRuntime(
+            migrate_cache(
+                {
+                    "academic_refresh": "2026-06-20T10:53:00+08:00",
+                    "class_events": [{"id": "old-class"}],
+                }
+            ),
+            now_provider=lambda: NOW,
+        )
+
+        result = runtime.refresh(
+            {
+                "calendar": lambda: SourceResult(data={"term_configs": []}),
+                "schedule": lambda: (_ for _ in ()).throw(
+                    SourceFailure("upstream_http", "学校接口返回 HTTP 504")
+                ),
+                "exams": lambda: SourceResult(data=[{"id": "exam-new"}]),
+                "tasks": lambda: SourceResult(data=[{"id": "task-new", "due_at": NOW.isoformat()}]),
+            }
+        )
+
+        self.assertEqual(result.cache["class_events"], [{"id": "old-class"}])
+        self.assertEqual(result.cache["exam_events"], [{"id": "exam-new"}])
+        self.assertEqual(result.cache["task_events"], [{"id": "task-new", "due_at": NOW.isoformat()}])
+        self.assertEqual(
+            result.cache["source_health"]["schedule"]["status"],
+            SourceStatus.FAILED.value,
+        )
+
+    def test_background_refresh_exception_still_runs_reminders(self):
+        calls = []
+
+        async def refresh():
+            calls.append("refresh")
+            raise RuntimeError("refresh failed")
+
+        async def notify():
+            calls.append("notify")
+
+        async def remind():
+            calls.append("remind")
+
+        result = asyncio.run(run_background_tick(refresh, notify, remind))
+
+        self.assertEqual(calls, ["refresh", "notify", "remind"])
+        self.assertFalse(result["refresh_ok"])
+        self.assertTrue(result["notification_ok"])
+
+    def test_calendar_pending_keeps_templates_and_query_is_annotated(self):
+        runtime = AcademicPluginRuntime(
+            migrate_cache(
+                {
+                    "academic_refresh": "2026-06-20T10:53:00+08:00",
+                    "class_events": [{"id": "old-class"}],
+                }
+            ),
+            now_provider=lambda: NOW,
+        )
+        runtime.refresh(
+            {
+                "schedule": lambda: SourceResult(
+                    data={
+                        "templates": [{"id": "template-1"}],
+                        "events": [{"id": "should-not-be-used"}],
+                    },
+                    metadata={
+                        "status": "calendar_pending",
+                        "message": "下一学期校历尚未发布。",
+                    },
+                )
+            }
+        )
+
+        self.assertEqual(runtime.cache["source_data"]["schedule_templates"], [{"id": "template-1"}])
+        self.assertEqual(runtime.cache["class_events"], [{"id": "old-class"}])
+        payload = runtime.annotate_query_payload("schedule", {"ok": True})
+        self.assertEqual(payload["source_status"]["status"], SourceStatus.WAITING_CALENDAR.value)
+
+    def test_calendar_recovery_replaces_schedule_events_and_clears_query_annotation(self):
+        runtime = AcademicPluginRuntime(
+            migrate_cache(
+                {
+                    "academic_refresh": "2026-06-20T10:53:00+08:00",
+                    "class_events": [{"id": "old-class"}],
+                }
+            ),
+            now_provider=lambda: NOW,
+        )
+        runtime.refresh(
+            {
+                "schedule": lambda: SourceResult(
+                    data={"templates": [{"id": "template-1"}], "events": []},
+                    metadata={"status": "calendar_pending"},
+                )
+            }
+        )
+        runtime.refresh(
+            {
+                "schedule": lambda: SourceResult(
+                    data={
+                        "templates": [{"id": "template-1"}],
+                        "events": [{"id": "new-class"}],
+                    }
+                )
+            },
+            force=True,
+        )
+
+        self.assertEqual(runtime.cache["class_events"], [{"id": "new-class"}])
+        self.assertNotIn("source_status", runtime.annotate_query_payload("schedule", {"ok": True}))
+
+    def test_status_annotation_only_applies_to_relevant_source(self):
+        runtime = AcademicPluginRuntime(
+            migrate_cache({"class_events": [{"id": "class-1"}]}),
+            now_provider=lambda: NOW,
+        )
+        runtime.refresh(
+            {
+                "tasks": lambda: (_ for _ in ()).throw(
+                    SourceFailure("upstream_http", "任务接口失败")
+                )
+            }
+        )
+
+        self.assertNotIn("source_status", runtime.annotate_query_payload("schedule", {"ok": True}))
+        self.assertEqual(
+            runtime.annotate_query_payload("tasks", {"ok": True})["source_status"]["status"],
+            SourceStatus.FAILED.value,
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -23,6 +23,12 @@ from astrbot.api.message_components import Plain
 from astrbot.api.star import Context, Star, register
 from astrbot.core.star.star_tools import StarTools
 
+from academic_core.health_notifier import HealthNotifier
+from academic_core.models import SourceHealth, SourceResult, SourceStatus, migrate_cache
+from academic_core.plugin_integration import source_status_payload
+from academic_core.refresh_coordinator import RefreshCoordinator
+from academic_core.zdbk_client import ZdbkClient
+
 
 TERM_AUTUMN = 0
 TERM_WINTER = 1
@@ -161,6 +167,7 @@ class ZjuAcademicPlugin(Star):
         self._cache_lock = asyncio.Lock()
         self._state: dict[str, Any] = {}
         self._cache: dict[str, Any] = {}
+        self._last_health_transitions: list[Any] = []
         self._loop_task: asyncio.Task | None = None
         self._public_route_task: asyncio.Task | None = None
 
@@ -168,7 +175,8 @@ class ZjuAcademicPlugin(Star):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.image_dir.mkdir(parents=True, exist_ok=True)
         self._state = await asyncio.to_thread(self._load_json_file, self.state_path, self._default_state())
-        self._cache = await asyncio.to_thread(self._load_json_file, self.cache_path, self._default_cache())
+        raw_cache = await asyncio.to_thread(self._load_json_file, self.cache_path, self._default_cache())
+        self._cache = migrate_cache(raw_cache)
         self._ensure_pta_login_token()
         await self._save_state()
         await asyncio.to_thread(self._remove_legacy_pta_login_page_config)
@@ -797,6 +805,7 @@ class ZjuAcademicPlugin(Star):
                 payload["reply_instruction"] = "不要使用 Markdown 表格，不要使用竖线表格。按 plain_lines 原样简洁回复。"
                 payload["plain_lines"] = self._class_plain_lines(raw_items)
                 payload["items"] = [self._class_payload(item) for item in raw_items]
+            payload = self._annotate_source_status(cache, "schedule", payload)
             return json.dumps(payload, ensure_ascii=False, indent=2)
 
         if normalized_type == "exams":
@@ -819,6 +828,7 @@ class ZjuAcademicPlugin(Star):
                 payload["reply_instruction"] = "不要使用 Markdown 表格，不要使用竖线表格。按 plain_lines 原样简洁回复。"
                 payload["plain_lines"] = self._exam_plain_lines(raw_items)
                 payload["items"] = [self._exam_payload(item) for item in raw_items]
+            payload = self._annotate_source_status(cache, "exams", payload)
             return json.dumps(payload, ensure_ascii=False, indent=2)
 
         if normalized_type in {"tasks", "pta_tasks"}:
@@ -848,6 +858,8 @@ class ZjuAcademicPlugin(Star):
                 )
                 payload["plain_lines"] = self._task_plain_lines(raw_items)
                 payload["items"] = [self._task_payload(item) for item in raw_items]
+            status_source = "pta_tasks" if normalized_type == "pta_tasks" else "tasks"
+            payload = self._annotate_source_status(cache, status_source, payload)
             return json.dumps(payload, ensure_ascii=False, indent=2)
 
         return json.dumps(
@@ -860,18 +872,32 @@ class ZjuAcademicPlugin(Star):
             indent=2,
         )
 
+    def _annotate_source_status(self, cache: dict[str, Any], source: str, payload: dict[str, Any]) -> dict[str, Any]:
+        status = source_status_payload(cache, source)
+        if status:
+            payload = dict(payload)
+            payload["source_status"] = status
+        return payload
+
     async def _background_loop(self):
         while True:
             try:
                 if self._cfg_bool("auto_refresh_enabled", True):
                     await self._refresh_cache(force=False)
-                await self._dispatch_reminders()
-                await asyncio.sleep(max(15, self._cfg_int("loop_interval_seconds", 45)))
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("zju academic loop failed")
-                await asyncio.sleep(60)
+                logger.exception("zju academic refresh loop failed")
+
+            try:
+                await self._dispatch_health_notifications()
+                await self._dispatch_reminders()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("zju academic notification loop failed")
+
+            await asyncio.sleep(max(15, self._cfg_int("loop_interval_seconds", 45)))
 
     async def _dispatch_reminders(self):
         now = self._now()
@@ -916,6 +942,43 @@ class ZjuAcademicPlugin(Star):
                     now=now,
                     grace=grace,
                 )
+
+    async def _dispatch_health_notifications(self):
+        transitions = list(self._last_health_transitions or [])
+        if not transitions:
+            return
+        recipients = self._reminder_targets()
+        if not recipients:
+            return
+
+        labels = {
+            "calendar": "校历",
+            "schedule": "课表",
+            "exams": "考试",
+            "tasks": "学在浙大任务",
+            "pta_tasks": "PTA 任务",
+        }
+        sent_any = False
+        for transition in transitions:
+            source = transition.source
+            notifier = HealthNotifier(source=source, source_label=labels.get(source, source))
+            health = SourceHealth.from_dict(self._cache.get("source_health", {}).get(source))
+            for note in notifier.pending(transition.before, health, recipients, self._now()):
+                try:
+                    sent = await self.context.send_message(
+                        note.recipient,
+                        MessageChain(chain=[Plain(note.text)]),
+                    )
+                except Exception:
+                    logger.exception("zju academic health notification failed")
+                    continue
+                if sent:
+                    health = notifier.mark_sent(health, note.recipient, self._now())
+                    self._cache.setdefault("source_health", {})[source] = health.to_dict()
+                    sent_any = True
+        self._last_health_transitions = []
+        if sent_any:
+            await self._save_cache()
 
     async def _dispatch_event_reminders(
         self,
@@ -973,7 +1036,7 @@ class ZjuAcademicPlugin(Star):
         return fallback
 
     async def _refresh_cache(self, force: bool) -> dict[str, Any]:
-        if not force and self._is_cache_fresh():
+        if not force and self._is_cache_fresh() and not self._has_due_unhealthy_source():
             return self._cache
         cache = await asyncio.to_thread(self._fetch_remote_data_sync, force)
         async with self._cache_lock:
@@ -982,94 +1045,194 @@ class ZjuAcademicPlugin(Star):
         return self._cache
 
     def _fetch_remote_data_sync(self, force: bool = False) -> dict[str, Any]:
-        refresh_academic = bool(force or not self._is_academic_cache_fresh())
-        refresh_tasks = bool(force or not self._is_task_cache_fresh())
+        refresh_academic = bool(
+            force
+            or not self._is_academic_cache_fresh()
+            or any(self._source_due_for_refresh(source) for source in ("calendar", "schedule", "exams"))
+        )
+        refresh_tasks = bool(
+            force
+            or not self._is_task_cache_fresh()
+            or any(self._source_due_for_refresh(source) for source in ("tasks", "pta_tasks"))
+        )
         if not refresh_academic and not refresh_tasks:
-            return self._cache
+            return migrate_cache(self._cache)
 
-        cache = dict(self._cache or self._default_cache())
-        previous_refresh = self._cfg_like_str(cache.get("last_refresh", ""))
-        cache.setdefault("academic_refresh", previous_refresh)
-        cache.setdefault("task_refresh", previous_refresh)
+        cache = migrate_cache(self._cache or self._default_cache())
         raw_counts = dict(cache.get("raw_counts", {}) or {})
-        classes: list[dict[str, Any]] = []
-        exams: list[dict[str, Any]] = []
-        tasks: list[dict[str, Any]] = []
-        client: BaseZjuClient | None = None
+        calendar_holder: dict[str, Any] = {}
+        refresh_meta: dict[str, Any] = {}
+        sources: dict[str, Any] = {}
+        client: ZdbkClient | None = None
 
         username = self._username()
         password = self._password()
-        if username and password and (refresh_academic or refresh_tasks):
+        needs_zju_client = bool(username and password and (refresh_academic or refresh_tasks))
+        if needs_zju_client:
             client = self._build_zju_client()
             client.login()
 
-        now = self._now()
+        def calendar_config() -> dict[str, Any]:
+            if "config" not in calendar_holder:
+                calendar_holder["config"] = self._academic_calendar_config(force=force)
+            return calendar_holder["config"]
+
         if refresh_academic:
-            calendar_config = self._academic_calendar_config(force=force)
-            term_configs = calendar_config.get("term_configs", [])
-            holiday_tweaks = calendar_config.get("holiday_tweaks", [])
+            sources["calendar"] = lambda: SourceResult(data=calendar_config())
+
             if client:
-                class_terms = self._unique_class_terms(term_configs)
-                for academic_year, term in class_terms:
-                    classes.extend(client.get_classes(academic_year, term))
-                exam_terms = self._unique_exam_terms(term_configs)
-                for academic_year, exam_term in exam_terms:
-                    exams.extend(client.get_exams(academic_year, exam_term))
+                def fetch_schedule() -> SourceResult:
+                    now = self._now()
+                    config = calendar_config()
+                    term_configs = config.get("term_configs", [])
+                    if self._calendar_refresh_state(term_configs) == "calendar_pending":
+                        return SourceResult(
+                            data={
+                                "templates": cache.get("source_data", {}).get("schedule_templates", []),
+                                "events": cache.get("class_events", []),
+                            },
+                            metadata={
+                                "status": "calendar_pending",
+                                "message": "下一学期校历尚未发布。",
+                            },
+                        )
 
-            schedule_start = now.date() - timedelta(days=now.date().weekday())
-            class_events = self._expand_class_events(classes, term_configs, holiday_tweaks, schedule_start)
-            exam_events = [item for item in exams if self._parse_dt(item["start_at"]) >= now - timedelta(days=7)]
-            exam_events.sort(key=lambda x: x["start_at"])
+                    classes: list[dict[str, Any]] = []
+                    for academic_year, term in self._unique_class_terms(term_configs):
+                        classes.extend(client.get_classes(academic_year, term))
+                    schedule_start = now.date() - timedelta(days=now.date().weekday())
+                    class_events = self._expand_class_events(
+                        classes,
+                        term_configs,
+                        config.get("holiday_tweaks", []),
+                        schedule_start,
+                    )
+                    refresh_meta["class_events_from"] = schedule_start.isoformat()
+                    raw_counts["class_templates"] = len(classes)
+                    raw_counts["calendar_source"] = config.get("source", "")
+                    raw_counts["calendar_updated_at"] = config.get("updated_at", "")
+                    return SourceResult(data={"templates": classes, "events": class_events})
 
-            cache["academic_refresh"] = now.isoformat()
-            cache["class_events_from"] = schedule_start.isoformat()
-            cache["class_events"] = class_events
-            cache["exam_events"] = exam_events
-            raw_counts.update(
-                {
-                    "class_templates": len(classes),
-                    "exams": len(exam_events),
-                    "calendar_source": calendar_config.get("source", ""),
-                    "calendar_updated_at": calendar_config.get("updated_at", ""),
-                }
-            )
+                def fetch_exams() -> SourceResult:
+                    now = self._now()
+                    exams = client.get_exams()
+                    exam_events = [
+                        item
+                        for item in exams
+                        if self._parse_dt(item["start_at"]) >= now - timedelta(days=7)
+                    ]
+                    exam_events.sort(key=lambda x: x["start_at"])
+                    raw_counts["exams"] = len(exam_events)
+                    return SourceResult(data=exam_events)
+
+                sources["schedule"] = fetch_schedule
+                sources["exams"] = fetch_exams
 
         if refresh_tasks:
-            try:
-                if client:
-                    tasks = self._fetch_courses_task_events_sync(client)
-            except Exception:
-                logger.exception("failed to fetch 学在浙大 tasks from courses.zju.edu.cn")
+            if client:
+                def fetch_tasks() -> SourceResult:
+                    return SourceResult(data=self._filter_task_horizon(self._fetch_courses_task_events_sync(client)))
 
-            try:
-                tasks.extend(self._fetch_pta_task_events_sync())
-            except Exception:
-                logger.exception("failed to fetch PTA tasks from pintia.cn")
+                sources["tasks"] = fetch_tasks
 
-            task_horizon = self._cfg_int("task_horizon_days", 45)
-            task_events = [
-                item for item in tasks
-                if self._parse_dt(item["due_at"]) >= now - timedelta(days=1)
-                and self._parse_dt(item["due_at"]) <= now + timedelta(days=task_horizon)
-            ]
-            task_events.sort(key=lambda x: x["due_at"])
+            def fetch_pta_tasks() -> SourceResult:
+                return SourceResult(data=self._filter_task_horizon(self._fetch_pta_task_events_sync()))
 
-            cache["task_refresh"] = now.isoformat()
-            cache["task_events"] = task_events
-            raw_counts["tasks"] = len(task_events)
+            sources["pta_tasks"] = fetch_pta_tasks
 
-        cache["last_refresh"] = now.isoformat()
+        result = RefreshCoordinator(cache, self._now).refresh(sources, force=force)
+        cache = migrate_cache(result.cache)
+        self._last_health_transitions = result.transitions
+        if refresh_meta.get("class_events_from"):
+            cache["class_events_from"] = refresh_meta["class_events_from"]
+
+        self._merge_task_source_data(cache)
+        raw_counts["tasks"] = len(cache.get("source_data", {}).get("task_events", []) or [])
+        raw_counts["pta_tasks"] = len(cache.get("source_data", {}).get("pta_task_events", []) or [])
         cache["raw_counts"] = raw_counts
+        self._update_legacy_refresh_times(cache)
         return cache
 
-    def _build_zju_client(self) -> "BaseZjuClient":
-        return UndergraduateClient(
+    def _build_zju_client(self) -> ZdbkClient:
+        return ZdbkClient(
             username=self._username(),
             password=self._password(),
             timeout=20,
         )
 
-    def _fetch_courses_task_events_sync(self, client: "BaseZjuClient") -> list[dict[str, Any]]:
+    def _has_due_unhealthy_source(self) -> bool:
+        return any(self._source_due_for_refresh(source) for source in ("calendar", "schedule", "exams", "tasks", "pta_tasks"))
+
+    def _source_due_for_refresh(self, source: str) -> bool:
+        health = SourceHealth.from_dict(self._cache.get("source_health", {}).get(source))
+        if health.status not in (SourceStatus.FAILED, SourceStatus.WAITING_CALENDAR):
+            return False
+        if not health.next_retry_at:
+            return True
+        try:
+            return self._now() >= self._parse_dt(health.next_retry_at)
+        except Exception:
+            return True
+
+    def _calendar_refresh_state(self, term_configs: list[dict[str, Any]]) -> str:
+        today = self._now().date()
+        parsed_terms: list[tuple[date, date]] = []
+        for item in term_configs:
+            try:
+                begin = self._parse_date(item["begin"])
+                end = self._parse_date(item["end"])
+            except Exception:
+                continue
+            parsed_terms.append((begin, end))
+        if not parsed_terms:
+            return "calendar_pending"
+        parsed_terms.sort(key=lambda item: item[0])
+        if any(begin <= today <= end for begin, end in parsed_terms):
+            return "active"
+        if any(begin > today for begin, _ in parsed_terms):
+            return "vacation"
+        return "calendar_pending"
+
+    def _filter_task_horizon(self, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        now = self._now()
+        task_horizon = self._cfg_int("task_horizon_days", 45)
+        result = [
+            item for item in tasks
+            if self._parse_dt(item["due_at"]) >= now - timedelta(days=1)
+            and self._parse_dt(item["due_at"]) <= now + timedelta(days=task_horizon)
+        ]
+        result.sort(key=lambda x: x["due_at"])
+        return result
+
+    def _merge_task_source_data(self, cache: dict[str, Any]):
+        source_data = cache.get("source_data", {})
+        tasks = list(source_data.get("task_events", []) or [])
+        pta_tasks = list(source_data.get("pta_task_events", []) or [])
+        merged = tasks + pta_tasks
+        merged.sort(key=lambda x: x.get("due_at", ""))
+        cache["task_events"] = merged
+
+    def _update_legacy_refresh_times(self, cache: dict[str, Any]):
+        health = cache.get("source_health", {})
+        academic_times = [
+            SourceHealth.from_dict(health.get(source)).last_success_at
+            for source in ("calendar", "schedule", "exams")
+        ]
+        task_times = [
+            SourceHealth.from_dict(health.get(source)).last_success_at
+            for source in ("tasks", "pta_tasks")
+        ]
+        latest_academic = max([item for item in academic_times if item], default="")
+        latest_tasks = max([item for item in task_times if item], default="")
+        if latest_academic:
+            cache["academic_refresh"] = latest_academic
+        if latest_tasks:
+            cache["task_refresh"] = latest_tasks
+        latest = max([item for item in (latest_academic, latest_tasks) if item], default="")
+        if latest:
+            cache["last_refresh"] = latest
+
+    def _fetch_courses_task_events_sync(self, client: ZdbkClient) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         for todo in client.get_learning_tasks():
             title = self._clean_text(str(todo.get("title", "")).strip())
@@ -2462,7 +2625,7 @@ class ZjuAcademicPlugin(Star):
         return {"bindings": {}, "reminder_log": {}, "pta_session": {}, "pta_login_token": ""}
 
     def _default_cache(self) -> dict[str, Any]:
-        return {
+        return migrate_cache({
             "last_refresh": "",
             "academic_refresh": "",
             "task_refresh": "",
@@ -2470,7 +2633,7 @@ class ZjuAcademicPlugin(Star):
             "exam_events": [],
             "task_events": [],
             "raw_counts": {},
-        }
+        })
 
     def _bindings(self) -> dict[str, Any]:
         return self._state.setdefault("bindings", {})
@@ -3110,7 +3273,7 @@ class PintiaClient:
 class BaseZjuClient:
     PUBKEY_URL = "https://zjuam.zju.edu.cn/cas/v2/getPubKey"
     COURSES_INDEX_URL = "https://courses.zju.edu.cn/user/index"
-    COURSES_TODOS_URL = "https://courses.zju.edu.cn/api/todos"
+    COURSES_TASKS_URL = "https://courses.zju.edu.cn/api/todos"
 
     def __init__(self, username: str, password: str, timeout: int = 20):
         self.username = username
@@ -3127,18 +3290,18 @@ class BaseZjuClient:
         )
 
     def login(self):
-        raise NotImplementedError
+        raise RuntimeError("BaseZjuClient is not used by the plugin.")
 
     def get_classes(self, academic_year: str, term: int) -> list[dict[str, Any]]:
-        raise NotImplementedError
+        raise RuntimeError("BaseZjuClient is not used by the plugin.")
 
     def get_exams(self, academic_year: str, exam_term: int) -> list[dict[str, Any]]:
-        raise NotImplementedError
+        raise RuntimeError("BaseZjuClient is not used by the plugin.")
 
     def get_learning_tasks(self) -> list[dict[str, Any]]:
         self._ensure_courses_session()
         resp = self.session.get(
-            self.COURSES_TODOS_URL,
+            self.COURSES_TASKS_URL,
             headers={
                 "Accept": "application/json, text/plain, */*",
                 "Referer": self.COURSES_INDEX_URL,
@@ -3235,9 +3398,9 @@ class BaseZjuClient:
 
 
 class UndergraduateClient(BaseZjuClient):
-    LOGIN_URL = "https://zjuam.zju.edu.cn/cas/login?service=http%3A%2F%2Fappservice.zju.edu.cn%2F"
-    CLASS_URL = "http://appservice.zju.edu.cn/zju-smartcampus/zdydjw/api/kbdy_cxXsZKbxx"
-    EXAM_URL = "http://appservice.zju.edu.cn/zju-smartcampus/zdydjw/api/kkqk_cxXsksxx"
+    LOGIN_URL = ZdbkClient.SSO_URL
+    CLASS_URL = ZdbkClient.TIMETABLE_URL
+    EXAM_URL = ZdbkClient.EXAMS_URL
 
     def login(self):
         self._login_cas(self.LOGIN_URL)

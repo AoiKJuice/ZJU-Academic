@@ -42,6 +42,8 @@ class ZdbkClient:
         "https://zdbk.zju.edu.cn/jwglxt/xskscx/kscx_cxXsgrksIndex.html?"
         "doType=query&queryModel.showCount=5000"
     )
+    COURSES_INDEX_URL = "https://courses.zju.edu.cn/user/index"
+    COURSES_TASKS_URL = "https://courses.zju.edu.cn/api/todos"
     ZDBK_HEADERS = {
         "Accept": "application/json, text/javascript, */*; q=0.01",
         "X-Requested-With": "XMLHttpRequest",
@@ -183,6 +185,27 @@ class ZdbkClient:
         self.last_converted_counts["exams"] = len(parsed)
         return parsed
 
+    def get_learning_tasks(self) -> list[dict[str, Any]]:
+        self._ensure_courses_session()
+        response = self.session.get(
+            self.COURSES_TASKS_URL,
+            headers={
+                "Accept": "application/json, text/plain, */*",
+                "Referer": self.COURSES_INDEX_URL,
+            },
+            timeout=self.timeout,
+        )
+        self._raise_for_http_status(response)
+        payload = response.json()
+        todo_list = payload.get("todo_list") if isinstance(payload, dict) else None
+        if not isinstance(todo_list, list):
+            raise ZdbkError("response_format", "学在浙大任务接口返回格式异常。")
+        return [
+            item
+            for item in todo_list
+            if isinstance(item, dict) and item.get("is_student") is True
+        ]
+
     def is_session_invalid_response(self, response: requests.Response) -> bool:
         if 300 <= int(getattr(response, "status_code", 0) or 0) < 400:
             return True
@@ -303,6 +326,42 @@ class ZdbkClient:
                 "教务系统登录后没有返回路由会话，请稍后重试。",
                 "ZDBK cookie route missing for /jwglxt",
             )
+
+    def _ensure_courses_session(self) -> None:
+        if not self.has_cookie("iPlanetDirectoryPro"):
+            raise ZdbkError("auth_session", "统一身份认证会话缺失，无法获取学在浙大任务。")
+        if self.has_cookie("session", "courses.zju.edu.cn"):
+            return
+
+        next_url = self.COURSES_INDEX_URL
+        seen: set[str] = set()
+        try:
+            for _ in range(16):
+                response = self.session.get(next_url, timeout=self.timeout, allow_redirects=False)
+                if 300 <= response.status_code < 400:
+                    location = response.headers.get("Location", "").strip()
+                    if not location:
+                        break
+                    next_url = urljoin(response.url, location)
+                    if next_url in seen:
+                        break
+                    seen.add(next_url)
+                    continue
+                self._raise_for_http_status(response)
+                if self.has_cookie("session", "courses.zju.edu.cn"):
+                    return
+                break
+        except requests.Timeout as exc:
+            raise ZdbkError("timeout", "学在浙大访问超时，请稍后重试。") from exc
+        except requests.RequestException as exc:
+            raise ZdbkError(
+                "upstream_http",
+                "学在浙大暂时不可用，请稍后重试。",
+                str(exc),
+            ) from exc
+
+        if not self.has_cookie("session", "courses.zju.edu.cn"):
+            raise ZdbkError("auth_session", "未能获取学在浙大学习平台 session。")
 
     def _send(self, method: str, url: str, **kwargs) -> requests.Response:
         kwargs.setdefault("timeout", self.timeout)

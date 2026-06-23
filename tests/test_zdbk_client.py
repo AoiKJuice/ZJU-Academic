@@ -326,5 +326,33 @@ class ZdbkPayloadTest(unittest.TestCase):
         self.assertIn("exam_time", {issue["code"] for issue in client.last_format_issues})
 
 
+class ZdbkCoursesTasksTest(unittest.TestCase):
+    def test_get_learning_tasks_filters_student_todos(self):
+        session = ScriptedSession()
+        session.cookies.set("iPlanetDirectoryPro", "zjuam", domain="zjuam.zju.edu.cn", path="/")
+        session.cookies.set("session", "courses", domain="courses.zju.edu.cn", path="/")
+        session.add(
+            "GET",
+            ZdbkClient.COURSES_TASKS_URL,
+            FakeResponse(
+                json_data={
+                    "todo_list": [
+                        {"id": "todo-1", "title": "学生任务", "is_student": True},
+                        {"id": "todo-2", "title": "教师任务", "is_student": False},
+                    ]
+                }
+            ),
+        )
+
+        client = ZdbkClient("alice", "plain-password", session=session)
+        tasks = client.get_learning_tasks()
+
+        self.assertEqual(tasks, [{"id": "todo-1", "title": "学生任务", "is_student": True}])
+        self.assertEqual(
+            session.calls[0]["kwargs"]["headers"]["Referer"],
+            ZdbkClient.COURSES_INDEX_URL,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
