@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from .messages import ERROR_MESSAGE, NEXT_TERM_CALENDAR_PENDING_MESSAGE
+from .messages import DATA_FETCH_FAILED_MESSAGE, DATA_RECOVERED_MESSAGE, NEXT_TERM_CALENDAR_PENDING_MESSAGE
 from .models import SourceHealth, SourceStatus
 
 
@@ -115,10 +115,10 @@ class HealthNotifier:
     def _problem_text(self, health: SourceHealth) -> str:
         if health.status == SourceStatus.WAITING_CALENDAR:
             return NEXT_TERM_CALENDAR_PENDING_MESSAGE
-        return ERROR_MESSAGE
+        return DATA_FETCH_FAILED_MESSAGE
 
     def _recovery_text(self, before: SourceHealth, after: SourceHealth) -> str:
-        return "已恢复"
+        return DATA_RECOVERED_MESSAGE
 
     def _sanitize(self, text: str) -> str:
         sanitized = str(text or "")

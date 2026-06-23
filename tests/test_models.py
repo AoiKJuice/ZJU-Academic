@@ -1,9 +1,7 @@
 import unittest
 
+from academic_core.messages import NEXT_TERM_CALENDAR_PENDING_MESSAGE
 from academic_core.models import SourceHealth, SourceStatus, migrate_cache
-
-
-NEXT_TERM_CALENDAR_PENDING_MESSAGE = "下一学期校历尚未发布，请前往插件设置页面查看"
 
 
 class ModelsTest(unittest.TestCase):

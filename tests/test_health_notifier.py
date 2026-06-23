@@ -2,12 +2,16 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from academic_core.health_notifier import HealthNotifier
+from academic_core.messages import (
+    DATA_FETCH_FAILED_MESSAGE,
+    DATA_RECOVERED_MESSAGE,
+    NEXT_TERM_CALENDAR_PENDING_MESSAGE,
+)
 from academic_core.models import SourceHealth, SourceStatus
 
 
 NOW = datetime(2026, 6, 22, 12, 0, tzinfo=timezone(timedelta(hours=8)))
-NEXT_TERM_CALENDAR_PENDING_MESSAGE = "下一学期校历尚未发布，请前往插件设置页面查看"
-ERROR_MESSAGE = "遇到错误"
+ERROR_MESSAGE = DATA_FETCH_FAILED_MESSAGE
 
 
 def healthy(last_success_at="2026-06-22T11:50:00+08:00"):
@@ -92,7 +96,7 @@ class HealthNotifierTest(unittest.TestCase):
             with self.subTest(before=before.status):
                 notes = notifier.pending(before, healthy(), ["session-1"], NOW)
                 self.assertEqual(len(notes), 1)
-                self.assertEqual(notes[0].text, "已恢复")
+                self.assertEqual(notes[0].text, DATA_RECOVERED_MESSAGE)
 
     def test_send_failure_does_not_update_delivery_and_partial_success_is_per_recipient(self):
         notifier = HealthNotifier(source="schedule", source_label="课表")

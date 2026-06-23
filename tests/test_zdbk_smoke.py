@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from academic_core.messages import DATA_FETCH_FAILED_MESSAGE
 from academic_core.zdbk_client import ZdbkError
 from scripts import zdbk_smoke
 
@@ -116,7 +117,7 @@ class ZdbkSmokeTest(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["status"], "error")
         self.assertEqual(payload["error_code"], "captcha_required")
-        self.assertEqual(payload["message"], "遇到错误")
+        self.assertEqual(payload["message"], DATA_FETCH_FAILED_MESSAGE)
         combined_output = stdout.getvalue() + stderr.getvalue()
         self.assertNotIn("student", combined_output)
         self.assertNotIn("secret", combined_output)

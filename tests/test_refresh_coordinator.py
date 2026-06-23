@@ -1,13 +1,13 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
+from academic_core.messages import DATA_FETCH_FAILED_MESSAGE, NEXT_TERM_CALENDAR_PENDING_MESSAGE
 from academic_core.models import SourceResult, SourceStatus, migrate_cache
 from academic_core.refresh_coordinator import RefreshCoordinator
 
 
 NOW = datetime(2026, 6, 22, 12, 0, tzinfo=timezone(timedelta(hours=8)))
-NEXT_TERM_CALENDAR_PENDING_MESSAGE = "下一学期校历尚未发布，请前往插件设置页面查看"
-ERROR_MESSAGE = "遇到错误"
+ERROR_MESSAGE = DATA_FETCH_FAILED_MESSAGE
 
 
 class SourceFailure(RuntimeError):

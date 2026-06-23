@@ -4,13 +4,13 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from academic_core.messages import DATA_FETCH_CACHE_MESSAGE, NEXT_TERM_CALENDAR_PENDING_MESSAGE
 from academic_core.models import SourceResult, SourceStatus, migrate_cache
 from academic_core.plugin_integration import AcademicPluginRuntime, run_background_tick
 
 
 NOW = datetime(2026, 6, 22, 12, 0, tzinfo=timezone(timedelta(hours=8)))
-NEXT_TERM_CALENDAR_PENDING_MESSAGE = "下一学期校历尚未发布，请前往插件设置页面查看"
-ERROR_MESSAGE = "遇到错误"
+ERROR_MESSAGE = DATA_FETCH_CACHE_MESSAGE
 
 
 class SourceFailure(RuntimeError):
@@ -196,7 +196,9 @@ class PluginIntegrationTest(unittest.TestCase):
             "腾讯验证码脚本未加载",
             "请稍后重试",
             "当前版本暂不支持自动填写",
-            "PTA 登录失败",
+            "遇到错误",
+            "浙大学业数据",
+            "浙大学务数据",
         ]
         for item in forbidden:
             with self.subTest(item=item):

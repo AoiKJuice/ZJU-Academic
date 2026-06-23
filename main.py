@@ -25,14 +25,42 @@ from astrbot.core.star.star_tools import StarTools
 
 try:
     from .academic_core.health_notifier import HealthNotifier
-    from .academic_core.messages import ERROR_MESSAGE, NEXT_TERM_CALENDAR_PENDING_MESSAGE
+    from .academic_core.messages import (
+        DATA_FETCH_FAILED_MESSAGE,
+        DATA_REFRESH_FAILED_MESSAGE,
+        MESSAGE_PREFIX,
+        NEXT_TERM_CALENDAR_PENDING_MESSAGE,
+        PTA_CAPTCHA_INCOMPLETE_MESSAGE,
+        PTA_CREDENTIALS_REQUIRED_MESSAGE,
+        PTA_DISABLED_MESSAGE,
+        PTA_LOGIN_FAILED_MESSAGE,
+        PTA_LOGIN_SAVED_MESSAGE,
+        PTA_PASSWORD_MISSING_MESSAGE,
+        PTA_SESSION_CLEARED_MESSAGE,
+        PTA_USERNAME_MISSING_MESSAGE,
+        QUERY_DENIED_MESSAGE,
+    )
     from .academic_core.models import SourceHealth, SourceResult, SourceStatus, migrate_cache
     from .academic_core.plugin_integration import source_status_payload
     from .academic_core.refresh_coordinator import RefreshCoordinator
     from .academic_core.zdbk_client import ZdbkClient
 except ImportError:
     from academic_core.health_notifier import HealthNotifier
-    from academic_core.messages import ERROR_MESSAGE, NEXT_TERM_CALENDAR_PENDING_MESSAGE
+    from academic_core.messages import (
+        DATA_FETCH_FAILED_MESSAGE,
+        DATA_REFRESH_FAILED_MESSAGE,
+        MESSAGE_PREFIX,
+        NEXT_TERM_CALENDAR_PENDING_MESSAGE,
+        PTA_CAPTCHA_INCOMPLETE_MESSAGE,
+        PTA_CREDENTIALS_REQUIRED_MESSAGE,
+        PTA_DISABLED_MESSAGE,
+        PTA_LOGIN_FAILED_MESSAGE,
+        PTA_LOGIN_SAVED_MESSAGE,
+        PTA_PASSWORD_MISSING_MESSAGE,
+        PTA_SESSION_CLEARED_MESSAGE,
+        PTA_USERNAME_MISSING_MESSAGE,
+        QUERY_DENIED_MESSAGE,
+    )
     from academic_core.models import SourceHealth, SourceResult, SourceStatus, migrate_cache
     from academic_core.plugin_integration import source_status_payload
     from academic_core.refresh_coordinator import RefreshCoordinator
@@ -267,7 +295,7 @@ class ZjuAcademicPlugin(Star):
 
         async def public_pta_login(token: str):
             if token != self._ensure_pta_login_token():
-                response = jsonify({"ok": False, "error": ERROR_MESSAGE})
+                response = jsonify({"ok": False, "error": PTA_LOGIN_FAILED_MESSAGE})
                 response.status_code = 403
                 return response
             if request.method == "GET":
@@ -314,7 +342,7 @@ class ZjuAcademicPlugin(Star):
             action = str((payload or {}).get("action", "")).strip().lower() if isinstance(payload, dict) else ""
             if action == "clear":
                 await self._clear_pta_session()
-                return jsonify({"ok": True, "message": "已清除"})
+                return jsonify({"ok": True, "message": PTA_SESSION_CLEARED_MESSAGE})
 
         return jsonify(self._pta_session_status_payload())
 
@@ -325,13 +353,13 @@ class ZjuAcademicPlugin(Star):
         rand_str = self._clean_text(str(payload.get("randStr") or payload.get("randstr") or payload.get("rand_str") or ""))
 
         if not self._pta_enabled():
-            return {"ok": False, "error": "PTA 待办未启用。"}
+            return {"ok": False, "error": PTA_DISABLED_MESSAGE}
         if not username:
-            return {"ok": False, "error": "缺少 PTA 账号。"}
+            return {"ok": False, "error": PTA_USERNAME_MISSING_MESSAGE}
         if not password:
-            return {"ok": False, "error": "缺少 PTA 密码。"}
+            return {"ok": False, "error": PTA_PASSWORD_MISSING_MESSAGE}
         if not ticket or not rand_str:
-            return {"ok": False, "error": ERROR_MESSAGE}
+            return {"ok": False, "error": PTA_CAPTCHA_INCOMPLETE_MESSAGE}
 
         try:
             session_cookie = await asyncio.to_thread(
@@ -348,7 +376,7 @@ class ZjuAcademicPlugin(Star):
         updated_at = await self._save_pta_login_state(session_cookie)
         return {
             "ok": True,
-            "message": "已保存",
+            "message": PTA_LOGIN_SAVED_MESSAGE,
             "session_saved": True,
             "updated_at": updated_at,
         }
@@ -364,7 +392,7 @@ class ZjuAcademicPlugin(Star):
     async def _save_pta_login_state(self, session_cookie: str) -> str:
         normalized = self._normalize_pta_cookie(session_cookie)
         if not normalized:
-            raise RuntimeError(ERROR_MESSAGE)
+            raise RuntimeError(PTA_LOGIN_FAILED_MESSAGE)
         updated_at = self._now().isoformat()
         self._state["pta_session"] = {
             "cookie": normalized,
@@ -436,7 +464,7 @@ class ZjuAcademicPlugin(Star):
         return payload
 
     def _sanitize_pta_error(self, exc: Exception) -> str:
-        return ERROR_MESSAGE
+        return PTA_LOGIN_FAILED_MESSAGE
 
     def _pta_login_page_html(self, public_login_path: str = "") -> str:
         public_path_json = json.dumps(public_login_path, ensure_ascii=False)
@@ -445,7 +473,7 @@ class ZjuAcademicPlugin(Star):
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ZJU Academic - PTA 登录</title>
+  <title>【ZJU-Academic】PTA 登录</title>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f5f7fb; color: #172033; }
@@ -473,16 +501,16 @@ class ZjuAcademicPlugin(Star):
 </head>
 <body>
   <main>
-    <h1>PTA 登录</h1>
+    <h1>【ZJU-Academic】PTA 登录</h1>
     <form id="loginForm">
-      <label for="username">PTA 账号</label>
+      <label for="username">【ZJU-Academic】PTA 账号</label>
       <input id="username" name="username" autocomplete="username" placeholder="邮箱或手机号">
-      <label for="password">PTA 密码</label>
+      <label for="password">【ZJU-Academic】PTA 密码</label>
       <input id="password" name="password" type="password" autocomplete="current-password">
-      <button id="submitBtn" type="submit">登录并保存会话</button>
+      <button id="submitBtn" type="submit">【ZJU-Academic】登录并保存会话</button>
     </form>
-    <div id="status" class="status">正在读取状态...</div>
-    <div class="meta">密码只用于本次提交给 Pintia 登录接口，插件只保存 PTASession。</div>
+    <div id="status" class="status">【ZJU-Academic】正在读取状态</div>
+    <div class="meta">【ZJU-Academic】密码只用于本次提交给 Pintia 登录接口，插件只保存 PTASession。</div>
   </main>
   <script>
     const publicLoginPath = __PUBLIC_LOGIN_PATH__;
@@ -550,35 +578,35 @@ class ZjuAcademicPlugin(Star):
 
     async function refreshStatus() {
       if (publicLoginPath) {
-        setStatus('填写账号密码后完成验证码。', '');
+        setStatus('【ZJU-Academic】请填写账号和密码', '');
         return;
       }
       try {
         const data = await api('/api/plug/zju-academic/pta-session');
         const parts = [];
-        parts.push('PTA 待办：' + (data.tasks_enabled ? '已启用' : '未启用'));
-        parts.push('已保存会话：' + (data.saved_session ? '是' : '否'));
-        if (data.saved_session_updated_at) parts.push('保存时间：' + data.saved_session_updated_at);
+        parts.push('【ZJU-Academic】PTA 待办：' + (data.tasks_enabled ? '已启用' : '未启用'));
+        parts.push('【ZJU-Academic】已保存会话：' + (data.saved_session ? '是' : '否'));
+        if (data.saved_session_updated_at) parts.push('【ZJU-Academic】保存时间：' + data.saved_session_updated_at);
         setStatus(parts.join('\\n'), data.saved_session ? 'ok' : '');
       } catch (err) {
-        setStatus('遇到错误', 'err');
+        setStatus('【ZJU-Academic】状态读取失败，请刷新页面', 'err');
       }
     }
 
     function startCaptcha(username, password) {
       if (!window.TencentCaptcha) {
-        setStatus('遇到错误', 'err');
+        setStatus('【ZJU-Academic】PTA 登录失败，请重新打开页面再试', 'err');
         button.disabled = false;
         return;
       }
       const captcha = new TencentCaptcha('194593025', async function(res) {
         if (!res || res.ret !== 0) {
-          setStatus('遇到错误', 'err');
+          setStatus('【ZJU-Academic】验证码未完成', 'err');
           button.disabled = false;
           return;
         }
         try {
-          setStatus('正在登录 Pintia...', '');
+          setStatus('【ZJU-Academic】正在登录 PTA', '');
           const data = await api(publicLoginPath || '/api/plug/zju-academic/pta-login', {
             method: 'POST',
             body: JSON.stringify({
@@ -588,9 +616,9 @@ class ZjuAcademicPlugin(Star):
               randStr: res.randstr
             })
           });
-          setStatus(data.message || '已保存', 'ok');
+          setStatus(data.message || '【ZJU-Academic】已保存 PTA 登录状态', 'ok');
         } catch (err) {
-          setStatus('遇到错误', 'err');
+          setStatus('【ZJU-Academic】PTA 登录失败，请重新打开页面再试', 'err');
         } finally {
           button.disabled = false;
         }
@@ -603,11 +631,11 @@ class ZjuAcademicPlugin(Star):
       const username = document.getElementById('username').value.trim();
       const password = document.getElementById('password').value;
       if (!username || !password) {
-        setStatus('账号和密码都要填写。', 'err');
+        setStatus('【ZJU-Academic】请填写账号和密码', 'err');
         return;
       }
       button.disabled = true;
-      setStatus('请完成验证码...', '');
+      setStatus('【ZJU-Academic】请完成验证码', '');
       startCaptcha(username, password);
     });
 
@@ -621,7 +649,7 @@ class ZjuAcademicPlugin(Star):
         return event.is_admin()
 
     def _query_denied_text(self) -> str:
-        return "只有管理员能查询浙大学业数据。"
+        return QUERY_DENIED_MESSAGE
 
     def _query_denied_payload(self) -> str:
         return json.dumps(
@@ -636,7 +664,7 @@ class ZjuAcademicPlugin(Star):
 
     @filter.llm_tool(name="zju_academic_status")
     async def llm_status(self, event: AstrMessageEvent) -> str:
-        """获取浙江大学学业插件状态、缓存数量、提醒配置、PTA 登录入口和当前会话 ID。用户询问 PTA 登录、配置、绑定、提醒是否生效、数据是否已刷新时使用。"""
+        """获取 ZJU-Academic 插件状态、缓存数量、提醒配置、PTA 登录入口和当前会话 ID。用户询问 PTA 登录、配置、绑定、提醒是否生效、zdbk数据是否已刷新时使用。"""
         if not self._is_query_allowed(event):
             return self._query_denied_payload()
         bindings = self._target_bindings()
@@ -682,7 +710,7 @@ class ZjuAcademicPlugin(Star):
 
     @filter.llm_tool(name="zju_academic_refresh")
     async def llm_refresh(self, event: AstrMessageEvent, force: bool = True) -> str:
-        """刷新浙江大学课表、考试和学在浙大任务数据。用户要求更新、同步、重新获取、数据可能过期，或回答前需要最新数据时使用。
+        """刷新 zdbk数据。用户要求更新、同步、重新获取、数据可能过期，或回答前需要最新数据时使用。
 
         Args:
             force(boolean): 是否强制刷新。需要最新数据时传 true；只想利用缓存时传 false。
@@ -694,7 +722,7 @@ class ZjuAcademicPlugin(Star):
         except Exception as exc:
             logger.exception("zju llm refresh failed")
             return json.dumps(
-                {"ok": False, "error": ERROR_MESSAGE},
+                {"ok": False, "error": DATA_REFRESH_FAILED_MESSAGE},
                 ensure_ascii=False,
                 indent=2,
             )
@@ -702,7 +730,7 @@ class ZjuAcademicPlugin(Star):
 
     @filter.llm_tool(name="zju_academic_binding")
     async def llm_binding(self, event: AstrMessageEvent, action: str = "status") -> str:
-        """管理当前会话的浙大学业提醒绑定。用户自然语言要求绑定、解绑、开启提醒、关闭提醒或查看当前会话绑定状态时使用。
+        """管理当前会话的 ZJU-Academic 提醒绑定。用户自然语言要求绑定、解绑、开启提醒、关闭提醒或查看当前会话绑定状态时使用。
 
         Args:
             action(string): bind、unbind 或 status。绑定/开启提醒传 bind；解绑/关闭提醒传 unbind；查看是否绑定传 status。
@@ -758,7 +786,7 @@ class ZjuAcademicPlugin(Star):
 
     @filter.llm_tool(name="zju_academic_query")
     async def llm_query(self, event: AstrMessageEvent, data_type: str, range: str = "", force_refresh: bool = False) -> str:
-        """查询浙江大学课表、考试、DDL、学在浙大任务或 PTA 待办。用户问 DDL、ddl、截止、任务时默认查询学在浙大和 PTA 的整合结果；用户明确说 PTA、Pintia、拼题A 时只查 PTA。
+        """查询 zdbk数据、DDL、学在浙大任务或 PTA 待办。用户问 DDL、ddl、截止、任务时默认查询学在浙大和 PTA 的整合结果；用户明确说 PTA、Pintia、拼题A 时只查 PTA。
 
         Args:
             data_type(string): 查询类型。可填 schedule、classes、课表、exam、exams、考试、task、tasks、任务、pta、pintia、拼题A。
@@ -772,7 +800,7 @@ class ZjuAcademicPlugin(Star):
         except Exception as exc:
             logger.exception("zju llm query refresh failed")
             return json.dumps(
-                {"ok": False, "error": ERROR_MESSAGE},
+                {"ok": False, "error": DATA_FETCH_FAILED_MESSAGE},
                 ensure_ascii=False,
                 indent=2,
             )
@@ -867,7 +895,7 @@ class ZjuAcademicPlugin(Star):
         return json.dumps(
             {
                 "ok": False,
-                "error": ERROR_MESSAGE,
+                "error": DATA_FETCH_FAILED_MESSAGE,
                 "supported_data_type": ["schedule", "exams", "tasks", "pta_tasks"],
             },
             ensure_ascii=False,
@@ -1025,6 +1053,7 @@ class ZjuAcademicPlugin(Star):
                 system_prompt=self._compose_persona_system_prompt(
                     "你是一个可靠的课业提醒助手。只根据用户提供的事件信息生成提醒，"
                     "不要编造课程、地点或截止时间。输出只包含最终要发送给学生的中文提醒文本。"
+                    "输出必须以【ZJU-Academic】开头。"
                     "允许沿用人设语气，但必须克制、清楚、可执行。不要使用 Markdown 标题、加粗、表格或代码块。"
                 ),
                 prompt=self._build_reminder_prompt(event_type, item, offset),
@@ -1032,6 +1061,8 @@ class ZjuAcademicPlugin(Star):
             text = (resp.completion_text or "").strip()
             text = text.strip("\"'` \n")
             if text:
+                if not text.startswith(MESSAGE_PREFIX):
+                    text = f"{MESSAGE_PREFIX}{text}"
                 return text[: self._cfg_int("llm_reminder_max_chars", 260)]
         except Exception:
             logger.exception("zju llm reminder generation failed")
@@ -1763,7 +1794,7 @@ class ZjuAcademicPlugin(Star):
             start_dt = self._parse_dt(item["start_at"])
             end_dt = self._parse_dt(item["end_at"])
             lines.append(
-                f"{start_dt.strftime('%m-%d %H:%M')}-{end_dt.strftime('%H:%M')} "
+                f"{MESSAGE_PREFIX}{start_dt.strftime('%m-%d %H:%M')}-{end_dt.strftime('%H:%M')} "
                 f"{item.get('name', '')}（{item.get('location') or '地点待定'}）"
             )
         return lines
@@ -1773,7 +1804,7 @@ class ZjuAcademicPlugin(Star):
         for item in items:
             start_dt = self._parse_dt(item["start_at"])
             lines.append(
-                f"{start_dt.strftime('%m-%d %H:%M')} "
+                f"{MESSAGE_PREFIX}{start_dt.strftime('%m-%d %H:%M')} "
                 f"{item.get('name', '')}（{item.get('location') or '地点待定'}）"
             )
         return lines
@@ -1785,7 +1816,7 @@ class ZjuAcademicPlugin(Star):
             platform = self._task_platform_label(item)
             detail = item.get("course") or item.get("location") or item.get("source") or ""
             suffix = f"{platform}，{detail}" if detail and detail != platform else platform
-            lines.append(f"{due_dt.strftime('%Y-%m-%d %H:%M')} {item.get('name', '')}（{suffix}）")
+            lines.append(f"{MESSAGE_PREFIX}{due_dt.strftime('%Y-%m-%d %H:%M')} {item.get('name', '')}（{suffix}）")
         return lines
 
     async def _send_query_image_result(
@@ -1800,6 +1831,7 @@ class ZjuAcademicPlugin(Star):
             return False
         if not cards:
             return False
+        title = self._prefixed_text(title)
         try:
             image_paths = await asyncio.to_thread(self._render_query_cards, title, cards, columns, min_width)
         except Exception:
@@ -1828,6 +1860,7 @@ class ZjuAcademicPlugin(Star):
             return None
         if not cards:
             return None
+        title = self._prefixed_text(title)
         try:
             image_paths = await asyncio.to_thread(self._render_query_cards, title, cards, columns, min_width)
         except Exception:
@@ -1842,6 +1875,7 @@ class ZjuAcademicPlugin(Star):
             return False
         if not items:
             return False
+        title = self._prefixed_text(title)
         try:
             image_paths = await asyncio.to_thread(self._render_schedule_calendar, title, items)
         except Exception:
@@ -2399,13 +2433,13 @@ class ZjuAcademicPlugin(Star):
         counts = cache.get("raw_counts", {})
         return "\n".join(
             [
-                "浙大学务数据已刷新。",
-                f"课表/考试刷新时间：{cache.get('academic_refresh', '') or cache.get('last_refresh', '')}",
-                f"DDL 刷新时间：{cache.get('task_refresh', '') or cache.get('last_refresh', '')}",
-                f"课表事件：{len(cache.get('class_events', []))}（模板 {counts.get('class_templates', 0)}）",
-                f"考试事件：{len(cache.get('exam_events', []))}",
-                f"任务事件：{len(cache.get('task_events', []))}",
-                f"校历来源：{counts.get('calendar_source', '')}",
+                f"{MESSAGE_PREFIX}zdbk数据已刷新",
+                f"{MESSAGE_PREFIX}课表/考试刷新时间：{cache.get('academic_refresh', '') or cache.get('last_refresh', '')}",
+                f"{MESSAGE_PREFIX}DDL 刷新时间：{cache.get('task_refresh', '') or cache.get('last_refresh', '')}",
+                f"{MESSAGE_PREFIX}课表事件：{len(cache.get('class_events', []))}（模板 {counts.get('class_templates', 0)}）",
+                f"{MESSAGE_PREFIX}考试事件：{len(cache.get('exam_events', []))}",
+                f"{MESSAGE_PREFIX}任务事件：{len(cache.get('task_events', []))}",
+                f"{MESSAGE_PREFIX}校历来源：{counts.get('calendar_source', '')}",
             ]
         )
 
@@ -2519,7 +2553,7 @@ class ZjuAcademicPlugin(Star):
     def _format_class_reminder(self, item: dict[str, Any], offset: int) -> str:
         start_dt = self._parse_dt(item["start_at"])
         return (
-            f"上课提醒：{offset} 分钟后有课\n"
+            f"{MESSAGE_PREFIX}上课提醒：{offset} 分钟后有课\n"
             f"{item['name']}\n"
             f"时间：{start_dt.strftime('%m-%d %H:%M')}\n"
             f"地点：{item.get('location') or '地点待定'}"
@@ -2528,7 +2562,7 @@ class ZjuAcademicPlugin(Star):
     def _format_exam_reminder(self, item: dict[str, Any], offset: int) -> str:
         start_dt = self._parse_dt(item["start_at"])
         return (
-            f"考试提醒：{offset} 分钟后开始\n"
+            f"{MESSAGE_PREFIX}考试提醒：{offset} 分钟后开始\n"
             f"{item['name']}\n"
             f"时间：{start_dt.strftime('%m-%d %H:%M')}\n"
             f"地点：{item.get('location') or '地点待定'}"
@@ -2538,7 +2572,7 @@ class ZjuAcademicPlugin(Star):
         due_dt = self._parse_dt(item["due_at"])
         extra = item.get("source") or item.get("course") or item.get("location") or "学在浙大"
         return (
-            f"任务提醒：{offset} 分钟后截止\n"
+            f"{MESSAGE_PREFIX}任务提醒：{offset} 分钟后截止\n"
             f"{item['name']}\n"
             f"截止：{due_dt.strftime('%m-%d %H:%M')}\n"
             f"来源：{extra}"
@@ -2566,6 +2600,7 @@ class ZjuAcademicPlugin(Star):
         return (
             "请根据下面 JSON 生成一条自然、简洁、可直接发给学生的提醒。\n"
             "要求：\n"
+            "0. 输出必须以【ZJU-Academic】开头。\n"
             "1. 语气要服从系统人设，但不要生硬套模板，也不要过度卖萌。\n"
             "2. 必须包含事件名称、时间、地点或来源；任务提醒要强调截止。\n"
             "3. 不要输出“让我看看”“我来查一下”“根据数据”等过程性话术。\n"
@@ -2799,10 +2834,10 @@ class ZjuAcademicPlugin(Star):
 
     def _pta_status_label(self) -> str:
         if not self._pta_enabled():
-            return "未启用"
+            return f"{MESSAGE_PREFIX}未启用"
         if self._pta_effective_session_cookie():
-            return "已登录"
-        return "未登录"
+            return f"{MESSAGE_PREFIX}已登录"
+        return f"{MESSAGE_PREFIX}未登录"
 
     def _cfg_like_str(self, value: Any) -> str:
         return str(value).strip() if value is not None else ""
@@ -3136,6 +3171,12 @@ class ZjuAcademicPlugin(Star):
     def _clean_text(self, text: str) -> str:
         return re.sub(r"\s+", " ", text or "").strip()
 
+    def _prefixed_text(self, text: str) -> str:
+        clean = str(text or "").strip()
+        if clean.startswith(MESSAGE_PREFIX):
+            return clean
+        return f"{MESSAGE_PREFIX}{clean}" if clean else MESSAGE_PREFIX
+
     def _coerce_task_datetime(self, value: Any) -> datetime | None:
         if value is None:
             return None
@@ -3201,14 +3242,14 @@ class PintiaClient:
         payload = resp.json()
         problem_sets = payload.get("problemSets")
         if not isinstance(problem_sets, list):
-            raise RuntimeError(ERROR_MESSAGE)
+            raise RuntimeError(PTA_LOGIN_FAILED_MESSAGE)
         return [item for item in problem_sets if isinstance(item, dict)]
 
     def _ensure_session(self):
         if self.cookie_header:
             return
         if not self.username or not self.password:
-            raise RuntimeError(ERROR_MESSAGE)
+            raise RuntimeError(PTA_CREDENTIALS_REQUIRED_MESSAGE)
 
         self.login()
 
@@ -3229,7 +3270,7 @@ class PintiaClient:
 
         session_value = self._read_session_cookie(resp)
         if not session_value:
-            raise RuntimeError(ERROR_MESSAGE)
+            raise RuntimeError(PTA_LOGIN_FAILED_MESSAGE)
         self.cookie_header = self._normalize_cookie(session_value)
         return session_value
 
@@ -3252,7 +3293,7 @@ class PintiaClient:
         return payload
 
     def _login_error(self, resp: requests.Response) -> str:
-        return ERROR_MESSAGE
+        return PTA_LOGIN_FAILED_MESSAGE
 
     def _read_session_cookie(self, resp: requests.Response) -> str:
         cookie_value = self.session.cookies.get("PTASession") or resp.cookies.get("PTASession")

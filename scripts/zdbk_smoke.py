@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, TextIO
 
-from academic_core.messages import ERROR_MESSAGE
+from academic_core.messages import DATA_FETCH_FAILED_MESSAGE
 from academic_core.zdbk_client import ZdbkClient, ZdbkError
 
 
@@ -67,7 +67,7 @@ def main(
             {
                 "status": "error",
                 "error_code": exc.code,
-                "message": ERROR_MESSAGE,
+                "message": DATA_FETCH_FAILED_MESSAGE,
             },
         )
         return 1
@@ -79,7 +79,7 @@ def main(
             {
                 "status": "error",
                 "error_code": "unexpected",
-                "message": ERROR_MESSAGE,
+                "message": DATA_FETCH_FAILED_MESSAGE,
             },
         )
         return 1
