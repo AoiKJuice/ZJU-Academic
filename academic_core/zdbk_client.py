@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import ssl
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urljoin
 
@@ -39,6 +42,35 @@ class ZdbkClient:
         "https://zdbk.zju.edu.cn/jwglxt/xskscx/kscx_cxXsgrksIndex.html?"
         "doType=query&queryModel.showCount=5000"
     )
+    ZDBK_HEADERS = {
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://zdbk.zju.edu.cn/jwglxt/xtgl/index_initMenu.html",
+    }
+    TERM_XQM = {
+        0: "1|秋",
+        1: "1|冬",
+        2: "2|春",
+        3: "2|夏",
+        4: "2|春",
+        5: "2|夏",
+    }
+    TERM_LABEL = {
+        0: "秋",
+        1: "冬",
+        2: "春",
+        3: "夏",
+        4: "春",
+        5: "夏",
+    }
+    TERM_CANONICAL = {
+        0: 0,
+        1: 1,
+        2: 2,
+        3: 3,
+        4: 2,
+        5: 3,
+    }
 
     def __init__(
         self,
@@ -62,6 +94,10 @@ class ZdbkClient:
                 )
             }
         )
+        self.last_http_status: dict[str, int] = {}
+        self.last_raw_counts: dict[str, int] = {}
+        self.last_converted_counts: dict[str, int] = {}
+        self.last_format_issues: list[dict[str, str]] = []
 
     def login(self) -> None:
         self._login_cas(self.SSO_URL)
@@ -89,6 +125,63 @@ class ZdbkClient:
             )
         self._raise_for_http_status(response)
         return response
+
+    def get_classes(self, academic_year: str, term: int) -> list[dict[str, Any]]:
+        xqm = self._class_term_query(term)
+        response = self.request_zdbk(
+            "POST",
+            self.TIMETABLE_URL,
+            headers=self.ZDBK_HEADERS,
+            data={"xnm": academic_year, "xqm": xqm, "captcha_value": ""},
+        )
+        self.last_http_status["classes"] = int(response.status_code)
+        payload = self._json_payload(response, source_name="课表")
+        if payload is None:
+            self.last_raw_counts["classes"] = 0
+            self.last_converted_counts["classes"] = 0
+            return []
+        if not isinstance(payload, dict) or "kbList" not in payload:
+            raise ZdbkError("response_format", "教务系统课表返回格式异常。")
+
+        raw_classes = payload.get("kbList")
+        if raw_classes is None:
+            self.last_raw_counts["classes"] = 0
+            self.last_converted_counts["classes"] = 0
+            return []
+        if not isinstance(raw_classes, list):
+            raise ZdbkError("response_format", "教务系统课表列表格式异常。")
+
+        parsed: list[dict[str, Any]] = []
+        for item in raw_classes:
+            class_item = self._parse_class_item(item, target_term=term)
+            if class_item is not None:
+                parsed.append(class_item)
+
+        self.last_raw_counts["classes"] = len(raw_classes)
+        self.last_converted_counts["classes"] = len(parsed)
+        return parsed
+
+    def get_exams(self) -> list[dict[str, Any]]:
+        self.last_format_issues = []
+        response = self.request_zdbk(
+            "POST",
+            self.EXAMS_URL,
+            headers=self.ZDBK_HEADERS,
+        )
+        self.last_http_status["exams"] = int(response.status_code)
+        payload = self._json_payload(response, source_name="考试")
+        if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+            raise ZdbkError("response_format", "教务系统考试返回格式异常。")
+
+        raw_exams = payload["items"]
+        parsed: list[dict[str, Any]] = []
+        for item in raw_exams:
+            if isinstance(item, dict) and item.get("xkkh"):
+                parsed.extend(self._parse_exam_item(item))
+
+        self.last_raw_counts["exams"] = len(raw_exams)
+        self.last_converted_counts["exams"] = len(parsed)
+        return parsed
 
     def is_session_invalid_response(self, response: requests.Response) -> bool:
         if 300 <= int(getattr(response, "status_code", 0) or 0) < 400:
@@ -227,6 +320,233 @@ class ZdbkClient:
                 str(exc),
             ) from exc
         raise ValueError(f"Unsupported HTTP method: {method}")
+
+    def _json_payload(self, response: requests.Response, source_name: str) -> Any:
+        text = str(getattr(response, "text", "") or "").strip()
+        if "captcha_error" in text:
+            raise ZdbkError("captcha_required", "教务系统要求验证码，当前版本暂不支持自动填写。")
+        if text == "null":
+            return None
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise ZdbkError(
+                "response_format",
+                f"教务系统{source_name}返回不是有效 JSON。",
+            ) from exc
+
+    def _class_term_query(self, term: int) -> str:
+        try:
+            return self.TERM_XQM[int(term)]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ZdbkError(
+                "response_format",
+                "课表学期编号不受支持，无法请求教务系统。",
+                f"Unsupported term: {term!r}",
+            ) from exc
+
+    def _parse_class_item(self, item: Any, target_term: int) -> dict[str, Any] | None:
+        if not isinstance(item, dict):
+            return None
+        if item.get("kcb") is None or str(item.get("sfyjskc") or "") == "1":
+            return None
+
+        label = self.TERM_LABEL[self.TERM_CANONICAL[int(target_term)]]
+        short_term = str(item.get("xxq") or "")
+        if short_term and label not in short_term:
+            return None
+
+        try:
+            day_number = int(str(item.get("xqj") or ""))
+            initial_period = int(str(item.get("djj") or ""))
+            duration = int(str(item.get("skcd") or ""))
+        except ValueError:
+            return None
+        if day_number < 1 or duration < 1:
+            return None
+
+        name, teacher, location = self._parse_kcb(str(item.get("kcb") or ""))
+        if not name:
+            return None
+
+        week_arrangement_raw = str(item.get("dsz") or "").strip()
+        week_arrangement = "normal"
+        if week_arrangement_raw == "0":
+            week_arrangement = "odd"
+        elif week_arrangement_raw == "1":
+            week_arrangement = "even"
+
+        term_arrangements = self._term_arrangements_from_short_term(short_term)
+        if not term_arrangements:
+            term_arrangements = [self.TERM_CANONICAL[int(target_term)]]
+
+        return {
+            "id": hashlib.sha1(
+                json.dumps(item, ensure_ascii=False, sort_keys=True).encode("utf-8")
+            ).hexdigest(),
+            "name": name,
+            "teacher": teacher,
+            "location": location,
+            "course_code": str(item.get("kch") or item.get("kcdm") or "").strip(),
+            "day_number": day_number,
+            "start_period": initial_period,
+            "end_period": initial_period + duration - 1,
+            "week_arrangement": week_arrangement,
+            "week_numbers": self._parse_week_numbers(item),
+            "term_arrangements": term_arrangements,
+        }
+
+    def _parse_kcb(self, text: str) -> tuple[str, str, str]:
+        normalized = (
+            text.replace("<br/>", "<br>")
+            .replace("<br />", "<br>")
+            .replace("\r", "")
+            .replace("\n", "")
+        )
+        parts = [
+            re.sub(r"<[^>]+>", "", part).strip()
+            for part in normalized.split("<br>")
+        ]
+        parts = [part for part in parts if part and part != "zwf"]
+        name = parts[0] if parts else ""
+        teacher = parts[2] if len(parts) >= 3 else ""
+        location = parts[3] if len(parts) >= 4 else ""
+        return (
+            name.replace("(", "（").replace(")", "）"),
+            teacher,
+            location,
+        )
+
+    def _term_arrangements_from_short_term(self, text: str) -> list[int]:
+        mapping = (("秋", 0), ("冬", 1), ("春", 2), ("夏", 3))
+        return [term for label, term in mapping if label in text]
+
+    def _parse_week_numbers(self, item: dict[str, Any]) -> list[int]:
+        for start_key, end_key in (
+            ("qsz", "jsz"),
+            ("ksz", "jsz"),
+            ("qszc", "jszc"),
+            ("startWeek", "endWeek"),
+            ("start_week", "end_week"),
+        ):
+            start = self._coerce_week_number(item.get(start_key))
+            end = self._coerce_week_number(item.get(end_key))
+            if start and end:
+                lo, hi = sorted((start, end))
+                return list(range(lo, hi + 1))
+
+        for key in (
+            "zcd",
+            "zc",
+            "zcs",
+            "zcsm",
+            "skzc",
+            "skzcs",
+            "week",
+            "weeks",
+            "weekNumbers",
+            "week_numbers",
+        ):
+            weeks = self._parse_week_numbers_text(item.get(key))
+            if weeks:
+                return weeks
+        return []
+
+    def _parse_exam_item(self, item: dict[str, Any]) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for agenda_key, location_key, seat_key, label in (
+            ("qzkssj", "qzksdd", "qzzwxh", "期中考试"),
+            ("kssj", "jsmc", "zwxh", "期末考试"),
+        ):
+            agenda = str(item.get(agenda_key) or "").strip()
+            if not agenda:
+                continue
+            parsed = self._parse_exam_agenda(agenda)
+            if not parsed:
+                self.last_format_issues.append(
+                    {
+                        "code": "exam_time",
+                        "message": f"{label}时间无法解析，已跳过该条。",
+                    }
+                )
+                continue
+            start_at, end_at = parsed
+            seat = str(item.get(seat_key) or "").strip()
+            description = f"座位号：{seat}" if seat else ""
+            result.append(
+                {
+                    "id": hashlib.sha1(
+                        f"{item.get('xkkh','')}|{agenda}|{label}".encode(
+                            "utf-8",
+                            errors="ignore",
+                        )
+                    ).hexdigest(),
+                    "name": f"{str(item.get('kcmc') or '').strip()} {label}".strip(),
+                    "location": str(item.get(location_key) or "").strip(),
+                    "description": description,
+                    "start_at": start_at.isoformat(),
+                    "end_at": end_at.isoformat(),
+                }
+            )
+        return result
+
+    def _parse_exam_agenda(self, text: str) -> tuple[datetime, datetime] | None:
+        match = re.search(
+            r"(\d{4})\D+(\d{1,2})\D+(\d{1,2})\D+(\d{1,2})[:：](\d{2})\D+(\d{1,2})[:：](\d{2})",
+            text,
+        )
+        if not match:
+            return None
+        year, month, day, shour, sminute, ehour, eminute = [int(part) for part in match.groups()]
+        tz = timezone(timedelta(hours=8))
+        try:
+            start_at = datetime(year, month, day, shour, sminute, tzinfo=tz)
+            end_at = datetime(year, month, day, ehour, eminute, tzinfo=tz)
+        except ValueError:
+            return None
+        if end_at <= start_at:
+            return None
+        return start_at, end_at
+
+    def _coerce_week_number(self, value: Any) -> int | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        match = re.search(r"\d{1,2}", text)
+        if not match:
+            return None
+        number = int(match.group(0))
+        return number if 1 <= number <= 30 else None
+
+    def _parse_week_numbers_text(self, value: Any) -> list[int]:
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple, set)):
+            numbers = {
+                number
+                for item in value
+                for number in self._parse_week_numbers_text(item)
+            }
+            return sorted(numbers)
+
+        text = str(value).strip()
+        if not text:
+            return []
+        text = text.replace("－", "-").replace("—", "-").replace("~", "-").replace("，", ",")
+
+        numbers: set[int] = set()
+        for start_raw, end_raw in re.findall(r"(\d{1,2})\s*-\s*(\d{1,2})", text):
+            start, end = int(start_raw), int(end_raw)
+            lo, hi = sorted((start, end))
+            if 1 <= lo <= 30 and 1 <= hi <= 30:
+                numbers.update(range(lo, hi + 1))
+
+        text_without_ranges = re.sub(r"\d{1,2}\s*-\s*\d{1,2}", " ", text)
+        for raw in re.findall(r"\d{1,2}", text_without_ranges):
+            number = int(raw)
+            if 1 <= number <= 30:
+                numbers.add(number)
+        return sorted(numbers)
 
     def _raise_for_http_status(self, response: requests.Response) -> None:
         try:

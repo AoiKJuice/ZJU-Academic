@@ -1,0 +1,53 @@
+{
+  "kbList": [
+    {
+      "kcb": "样例课程甲<br>教学班A<br>教师甲<br>样例教室A<br>zwf",
+      "sfyjskc": "0",
+      "xqj": "2",
+      "djj": "3",
+      "skcd": "2",
+      "dsz": "0",
+      "xxq": "夏",
+      "zcd": "1-4周",
+      "kch": "FAKE101",
+      "sfqd": "1"
+    },
+    {
+      "kcb": "样例课程乙<br>教学班B<br>教师乙<br>样例教室B<br>zwf",
+      "sfyjskc": "0",
+      "xqj": "5",
+      "djj": "7",
+      "skcd": "1",
+      "dsz": "1",
+      "xxq": "夏",
+      "zcd": "2,4,6周",
+      "kch": "FAKE102",
+      "sfqd": "1"
+    },
+    {
+      "kcb": "预置课程<br>教学班C<br>教师丙<br>样例教室C<br>zwf",
+      "sfyjskc": "1",
+      "xqj": "1",
+      "djj": "1",
+      "skcd": "2",
+      "dsz": "",
+      "xxq": "夏",
+      "zcd": "1-2周",
+      "kch": "FAKE103",
+      "sfqd": "1"
+    },
+    {
+      "kcb": "非本短学期课程<br>教学班D<br>教师丁<br>样例教室D<br>zwf",
+      "sfyjskc": "0",
+      "xqj": "3",
+      "djj": "9",
+      "skcd": "2",
+      "dsz": "",
+      "xxq": "冬",
+      "zcd": "1-2周",
+      "kch": "FAKE104",
+      "sfqd": "1"
+    }
+  ],
+  "xh": "0000000000"
+}

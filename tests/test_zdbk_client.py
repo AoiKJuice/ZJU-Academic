@@ -1,4 +1,6 @@
 import unittest
+import json
+from pathlib import Path
 
 import requests
 from requests.cookies import RequestsCookieJar
@@ -154,6 +156,18 @@ def add_successful_login(session, include_route=True):
     )
 
 
+def load_fixture(name):
+    return json.loads((Path(__file__).parent / "fixtures" / name).read_text(encoding="utf-8"))
+
+
+def json_response(payload):
+    return FakeResponse(
+        text=json.dumps(payload, ensure_ascii=False),
+        json_data=payload,
+        url="https://zdbk.zju.edu.cn/jwglxt/xtgl/index_initMenu.html",
+    )
+
+
 class ZdbkSessionTest(unittest.TestCase):
     def test_login_extracts_execution_encrypts_password_and_gets_zdbk_cookies(self):
         session = ScriptedSession()
@@ -220,6 +234,96 @@ class ZdbkSessionTest(unittest.TestCase):
             if call["method"] == "POST" and call["url"] == ZdbkClient.TIMETABLE_URL
         ]
         self.assertEqual(len(business_calls), 2)
+
+
+class ZdbkPayloadTest(unittest.TestCase):
+    def test_get_classes_posts_current_zdbk_payload_and_converts_timetable(self):
+        payload = load_fixture("zdbk_timetable.json")
+        session = ScriptedSession()
+        session.add("POST", ZdbkClient.TIMETABLE_URL, json_response(payload))
+        client = ZdbkClient("alice", "plain-password", session=session)
+
+        classes = client.get_classes("2025-2026", 3)
+
+        call = session.calls[0]
+        self.assertEqual(
+            call["kwargs"]["data"],
+            {"xnm": "2025-2026", "xqm": "2|夏", "captcha_value": ""},
+        )
+        self.assertEqual(call["kwargs"]["headers"], ZdbkClient.ZDBK_HEADERS)
+        self.assertEqual(len(classes), 2)
+
+        first = classes[0]
+        self.assertEqual(first["name"], "样例课程甲")
+        self.assertEqual(first["teacher"], "教师甲")
+        self.assertEqual(first["location"], "样例教室A")
+        self.assertEqual(first["course_code"], "FAKE101")
+        self.assertEqual(first["day_number"], 2)
+        self.assertEqual(first["start_period"], 3)
+        self.assertEqual(first["end_period"], 4)
+        self.assertEqual(first["week_arrangement"], "odd")
+        self.assertEqual(first["week_numbers"], [1, 2, 3, 4])
+        self.assertEqual(first["term_arrangements"], [3])
+
+        second = classes[1]
+        self.assertEqual(second["week_arrangement"], "even")
+        self.assertEqual(second["week_numbers"], [2, 4, 6])
+        self.assertNotIn("预置课程", {item["name"] for item in classes})
+        self.assertNotIn("非本短学期课程", {item["name"] for item in classes})
+        self.assertEqual(client.last_raw_counts["classes"], 4)
+        self.assertEqual(client.last_converted_counts["classes"], 2)
+
+    def test_get_classes_accepts_legacy_spring_and_summer_term_ids(self):
+        for legacy_term, expected_xqm in ((4, "2|春"), (5, "2|夏")):
+            with self.subTest(legacy_term=legacy_term):
+                session = ScriptedSession()
+                session.add("POST", ZdbkClient.TIMETABLE_URL, json_response({"kbList": []}))
+                client = ZdbkClient("alice", "plain-password", session=session)
+
+                self.assertEqual(client.get_classes("2025-2026", legacy_term), [])
+                self.assertEqual(session.calls[0]["kwargs"]["data"]["xqm"], expected_xqm)
+
+    def test_get_classes_handles_captcha_null_and_malformed_payloads(self):
+        session = ScriptedSession()
+        session.add("POST", ZdbkClient.TIMETABLE_URL, FakeResponse(text="captcha_error"))
+        client = ZdbkClient("alice", "plain-password", session=session)
+        with self.assertRaises(ZdbkError) as ctx:
+            client.get_classes("2025-2026", 3)
+        self.assertEqual(ctx.exception.code, "captcha_required")
+
+        session = ScriptedSession()
+        session.add("POST", ZdbkClient.TIMETABLE_URL, FakeResponse(text="null", json_data=None))
+        client = ZdbkClient("alice", "plain-password", session=session)
+        self.assertEqual(client.get_classes("2025-2026", 3), [])
+
+        session = ScriptedSession()
+        session.add("POST", ZdbkClient.TIMETABLE_URL, json_response({"unexpected": []}))
+        client = ZdbkClient("alice", "plain-password", session=session)
+        with self.assertRaises(ZdbkError) as ctx:
+            client.get_classes("2025-2026", 3)
+        self.assertEqual(ctx.exception.code, "response_format")
+
+    def test_get_exams_reads_items_and_skips_unparseable_exam_dates(self):
+        payload = load_fixture("zdbk_exams.json")
+        session = ScriptedSession()
+        session.add("POST", ZdbkClient.EXAMS_URL, json_response(payload))
+        client = ZdbkClient("alice", "plain-password", session=session)
+
+        exams = client.get_exams()
+
+        self.assertEqual(session.calls[0]["kwargs"]["headers"], ZdbkClient.ZDBK_HEADERS)
+        self.assertEqual(len(exams), 2)
+        self.assertEqual(exams[0]["name"], "样例课程甲 期中考试")
+        self.assertEqual(exams[0]["location"], "样例考场A")
+        self.assertEqual(exams[0]["description"], "座位号：A01")
+        self.assertEqual(exams[0]["start_at"], "2026-05-15T10:00:00+08:00")
+        self.assertEqual(exams[0]["end_at"], "2026-05-15T11:30:00+08:00")
+        self.assertEqual(exams[1]["name"], "样例课程甲 期末考试")
+        self.assertEqual(exams[1]["location"], "样例考场B")
+        self.assertEqual(exams[1]["description"], "座位号：B02")
+        self.assertEqual(client.last_raw_counts["exams"], 2)
+        self.assertEqual(client.last_converted_counts["exams"], 2)
+        self.assertIn("exam_time", {issue["code"] for issue in client.last_format_issues})
 
 
 if __name__ == "__main__":
