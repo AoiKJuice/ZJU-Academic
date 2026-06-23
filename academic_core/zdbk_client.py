@@ -11,6 +11,8 @@ from urllib.parse import urljoin
 import requests
 from requests.adapters import HTTPAdapter
 
+from .messages import ERROR_MESSAGE
+
 
 class LegacySSLAdapter(HTTPAdapter):
     def init_poolmanager(self, *args, **kwargs):
@@ -106,7 +108,7 @@ class ZdbkClient:
         if not self.has_cookie("iPlanetDirectoryPro"):
             raise ZdbkError(
                 "auth_session",
-                "统一身份认证登录后没有返回有效会话，请稍后重试。",
+                ERROR_MESSAGE,
                 "ZJUAM cookie iPlanetDirectoryPro missing after CAS login",
             )
         self._ensure_zdbk_session()
@@ -122,7 +124,7 @@ class ZdbkClient:
         if self.is_session_invalid_response(response):
             raise ZdbkError(
                 "auth_session",
-                "教务系统会话已失效，重新登录后仍无法访问，请稍后重试。",
+                ERROR_MESSAGE,
                 "ZDBK response still indicates invalid session after one re-login",
             )
         self._raise_for_http_status(response)
@@ -143,7 +145,7 @@ class ZdbkClient:
             self.last_converted_counts["classes"] = 0
             return []
         if not isinstance(payload, dict) or "kbList" not in payload:
-            raise ZdbkError("response_format", "教务系统课表返回格式异常。")
+            raise ZdbkError("response_format", ERROR_MESSAGE)
 
         raw_classes = payload.get("kbList")
         if raw_classes is None:
@@ -151,7 +153,7 @@ class ZdbkClient:
             self.last_converted_counts["classes"] = 0
             return []
         if not isinstance(raw_classes, list):
-            raise ZdbkError("response_format", "教务系统课表列表格式异常。")
+            raise ZdbkError("response_format", ERROR_MESSAGE)
 
         parsed: list[dict[str, Any]] = []
         for item in raw_classes:
@@ -173,7 +175,7 @@ class ZdbkClient:
         self.last_http_status["exams"] = int(response.status_code)
         payload = self._json_payload(response, source_name="考试")
         if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
-            raise ZdbkError("response_format", "教务系统考试返回格式异常。")
+            raise ZdbkError("response_format", ERROR_MESSAGE)
 
         raw_exams = payload["items"]
         parsed: list[dict[str, Any]] = []
@@ -199,7 +201,7 @@ class ZdbkClient:
         payload = response.json()
         todo_list = payload.get("todo_list") if isinstance(payload, dict) else None
         if not isinstance(todo_list, list):
-            raise ZdbkError("response_format", "学在浙大任务接口返回格式异常。")
+            raise ZdbkError("response_format", ERROR_MESSAGE)
         return [
             item
             for item in todo_list
@@ -239,7 +241,7 @@ class ZdbkClient:
             if not match:
                 raise ZdbkError(
                     "response_format",
-                    "统一身份认证页面格式异常，无法读取登录参数。",
+                    ERROR_MESSAGE,
                     "CAS execution field missing",
                 )
             execution = match.group(1)
@@ -266,21 +268,21 @@ class ZdbkClient:
             )
             self._raise_for_http_status(response)
         except requests.Timeout as exc:
-            raise ZdbkError("timeout", "学校统一身份认证访问超时，请稍后重试。") from exc
+            raise ZdbkError("timeout", ERROR_MESSAGE) from exc
         except requests.RequestException as exc:
             raise ZdbkError(
                 "upstream_http",
-                "学校统一身份认证暂时不可用，请稍后重试。",
+                ERROR_MESSAGE,
                 str(exc),
             ) from exc
 
         text = str(getattr(response, "text", "") or "")
         if "用户名或密码错误" in text or "异常登录" in text:
-            raise ZdbkError("auth_credentials", "统一身份认证登录失败：用户名或密码错误。")
+            raise ZdbkError("auth_credentials", ERROR_MESSAGE)
         if "账号被锁定" in text:
-            raise ZdbkError("auth_locked", "统一身份认证登录失败：账号已被锁定。")
+            raise ZdbkError("auth_locked", ERROR_MESSAGE)
         if "验证码" in text or "captcha" in text.lower():
-            raise ZdbkError("captcha_required", "统一身份认证要求验证码，当前版本暂不支持自动填写。")
+            raise ZdbkError("captcha_required", ERROR_MESSAGE)
 
     def _ensure_zdbk_session(self) -> None:
         try:
@@ -295,7 +297,7 @@ class ZdbkClient:
                 if not location:
                     raise ZdbkError(
                         "auth_session",
-                        "教务系统没有返回有效跳转地址，请稍后重试。",
+                        ERROR_MESSAGE,
                         "ZDBK SSO redirect Location missing",
                     )
                 target = urljoin(response.url, location)
@@ -306,30 +308,30 @@ class ZdbkClient:
                 )
                 self._raise_for_http_status(response)
         except requests.Timeout as exc:
-            raise ZdbkError("timeout", "教务系统登录访问超时，请稍后重试。") from exc
+            raise ZdbkError("timeout", ERROR_MESSAGE) from exc
         except requests.RequestException as exc:
             raise ZdbkError(
                 "upstream_http",
-                "教务系统暂时不可用，请稍后重试。",
+                ERROR_MESSAGE,
                 str(exc),
             ) from exc
 
         if not self.has_cookie("JSESSIONID", "zdbk.zju.edu.cn", "/jwglxt"):
             raise ZdbkError(
                 "auth_session",
-                "教务系统登录后没有返回有效会话，请稍后重试。",
+                ERROR_MESSAGE,
                 "ZDBK cookie JSESSIONID missing for /jwglxt",
             )
         if not self.has_cookie("route", "zdbk.zju.edu.cn"):
             raise ZdbkError(
                 "auth_session",
-                "教务系统登录后没有返回路由会话，请稍后重试。",
+                ERROR_MESSAGE,
                 "ZDBK cookie route missing",
             )
 
     def _ensure_courses_session(self) -> None:
         if not self.has_cookie("iPlanetDirectoryPro"):
-            raise ZdbkError("auth_session", "统一身份认证会话缺失，无法获取学在浙大任务。")
+            raise ZdbkError("auth_session", ERROR_MESSAGE)
         if self.has_cookie("session", "courses.zju.edu.cn"):
             return
 
@@ -352,16 +354,16 @@ class ZdbkClient:
                     return
                 break
         except requests.Timeout as exc:
-            raise ZdbkError("timeout", "学在浙大访问超时，请稍后重试。") from exc
+            raise ZdbkError("timeout", ERROR_MESSAGE) from exc
         except requests.RequestException as exc:
             raise ZdbkError(
                 "upstream_http",
-                "学在浙大暂时不可用，请稍后重试。",
+                ERROR_MESSAGE,
                 str(exc),
             ) from exc
 
         if not self.has_cookie("session", "courses.zju.edu.cn"):
-            raise ZdbkError("auth_session", "未能获取学在浙大学习平台 session。")
+            raise ZdbkError("auth_session", ERROR_MESSAGE)
 
     def _send(self, method: str, url: str, **kwargs) -> requests.Response:
         kwargs.setdefault("timeout", self.timeout)
@@ -371,11 +373,11 @@ class ZdbkClient:
             if method.upper() == "POST":
                 return self.session.post(url, **kwargs)
         except requests.Timeout as exc:
-            raise ZdbkError("timeout", "学校接口访问超时，请稍后重试。") from exc
+            raise ZdbkError("timeout", ERROR_MESSAGE) from exc
         except requests.RequestException as exc:
             raise ZdbkError(
                 "upstream_http",
-                "学校接口暂时不可用，请稍后重试。",
+                ERROR_MESSAGE,
                 str(exc),
             ) from exc
         raise ValueError(f"Unsupported HTTP method: {method}")
@@ -383,7 +385,7 @@ class ZdbkClient:
     def _json_payload(self, response: requests.Response, source_name: str) -> Any:
         text = str(getattr(response, "text", "") or "").strip()
         if "captcha_error" in text:
-            raise ZdbkError("captcha_required", "教务系统要求验证码，当前版本暂不支持自动填写。")
+            raise ZdbkError("captcha_required", ERROR_MESSAGE)
         if text == "null":
             return None
         try:
@@ -391,7 +393,7 @@ class ZdbkClient:
         except ValueError as exc:
             raise ZdbkError(
                 "response_format",
-                f"教务系统{source_name}返回不是有效 JSON。",
+                ERROR_MESSAGE,
             ) from exc
 
     def _class_term_query(self, term: int) -> str:
@@ -400,7 +402,7 @@ class ZdbkClient:
         except (KeyError, TypeError, ValueError) as exc:
             raise ZdbkError(
                 "response_format",
-                "课表学期编号不受支持，无法请求教务系统。",
+                ERROR_MESSAGE,
                 f"Unsupported term: {term!r}",
             ) from exc
 
@@ -614,7 +616,7 @@ class ZdbkClient:
             status_code = getattr(response, "status_code", "")
             raise ZdbkError(
                 "upstream_http",
-                f"学校接口返回 HTTP {status_code}，请稍后重试。",
+                ERROR_MESSAGE,
                 str(exc),
             ) from exc
 

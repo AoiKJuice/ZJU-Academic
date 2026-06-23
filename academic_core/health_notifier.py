@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from .messages import NEXT_TERM_CALENDAR_PENDING_MESSAGE
+from .messages import ERROR_MESSAGE, NEXT_TERM_CALENDAR_PENDING_MESSAGE
 from .models import SourceHealth, SourceStatus
 
 
@@ -115,29 +115,10 @@ class HealthNotifier:
     def _problem_text(self, health: SourceHealth) -> str:
         if health.status == SourceStatus.WAITING_CALENDAR:
             return NEXT_TERM_CALENDAR_PENDING_MESSAGE
-        else:
-            headline = f"{self.source_label}数据异常：{self._sanitize(health.last_error_message)}"
-        last_success = health.last_success_at or "暂无"
-        next_retry = health.next_retry_at or "稍后"
-        return "\n".join(
-            [
-                headline,
-                f"最后成功：{last_success}",
-                f"下次自动尝试：{next_retry}",
-            ]
-        )
+        return ERROR_MESSAGE
 
     def _recovery_text(self, before: SourceHealth, after: SourceHealth) -> str:
-        last_success = after.last_success_at or after.last_attempt_at or "刚刚"
-        previous = self._sanitize(before.last_error_message)
-        return "\n".join(
-            [
-                f"{self.source_label}已恢复。",
-                f"恢复时间：{last_success}",
-                f"此前异常：{previous or before.last_error_code or '未记录'}",
-                "后续查询将直接使用最新数据。",
-            ]
-        )
+        return "已恢复"
 
     def _sanitize(self, text: str) -> str:
         sanitized = str(text or "")

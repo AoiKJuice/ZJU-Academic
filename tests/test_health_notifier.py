@@ -7,6 +7,7 @@ from academic_core.models import SourceHealth, SourceStatus
 
 NOW = datetime(2026, 6, 22, 12, 0, tzinfo=timezone(timedelta(hours=8)))
 NEXT_TERM_CALENDAR_PENDING_MESSAGE = "下一学期校历尚未发布，请前往插件设置页面查看"
+ERROR_MESSAGE = "遇到错误"
 
 
 def healthy(last_success_at="2026-06-22T11:50:00+08:00"):
@@ -46,9 +47,10 @@ class HealthNotifierTest(unittest.TestCase):
         failure_notes = notifier.pending(healthy(), failed(), ["session-1"], NOW)
         self.assertEqual(len(failure_notes), 1)
         self.assertEqual(failure_notes[0].recipient, "session-1")
-        self.assertIn("课表", failure_notes[0].text)
-        self.assertIn("学校接口返回 HTTP 504", failure_notes[0].text)
-        self.assertIn("2026-06-20T10:53:00+08:00", failure_notes[0].text)
+        self.assertEqual(failure_notes[0].text, ERROR_MESSAGE)
+        self.assertNotIn("课表", failure_notes[0].text)
+        self.assertNotIn("学校接口返回 HTTP 504", failure_notes[0].text)
+        self.assertNotIn("2026-06-20T10:53:00+08:00", failure_notes[0].text)
         self.assertNotIn("当前会使用最近一次成功数据", failure_notes[0].text)
         self.assertNotIn("可执行操作", failure_notes[0].text)
 
@@ -82,7 +84,7 @@ class HealthNotifierTest(unittest.TestCase):
         notes = notifier.pending(sent, changed, ["session-1"], NOW + timedelta(minutes=10))
 
         self.assertEqual(len(notes), 1)
-        self.assertIn("验证码", notes[0].text)
+        self.assertEqual(notes[0].text, ERROR_MESSAGE)
 
     def test_recovery_notification_after_failure_or_calendar_pending(self):
         notifier = HealthNotifier(source="schedule", source_label="课表")
@@ -90,7 +92,7 @@ class HealthNotifierTest(unittest.TestCase):
             with self.subTest(before=before.status):
                 notes = notifier.pending(before, healthy(), ["session-1"], NOW)
                 self.assertEqual(len(notes), 1)
-                self.assertIn("已恢复", notes[0].text)
+                self.assertEqual(notes[0].text, "已恢复")
 
     def test_send_failure_does_not_update_delivery_and_partial_success_is_per_recipient(self):
         notifier = HealthNotifier(source="schedule", source_label="课表")

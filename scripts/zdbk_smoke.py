@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, TextIO
 
+from academic_core.messages import ERROR_MESSAGE
 from academic_core.zdbk_client import ZdbkClient, ZdbkError
 
 
@@ -66,7 +67,7 @@ def main(
             {
                 "status": "error",
                 "error_code": exc.code,
-                "message": exc.user_message,
+                "message": ERROR_MESSAGE,
             },
         )
         return 1
@@ -78,7 +79,7 @@ def main(
             {
                 "status": "error",
                 "error_code": "unexpected",
-                "message": "ZDBK 只读验证失败。",
+                "message": ERROR_MESSAGE,
             },
         )
         return 1

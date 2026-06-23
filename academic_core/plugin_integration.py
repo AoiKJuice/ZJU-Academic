@@ -75,9 +75,7 @@ def source_status_payload(cache: dict[str, Any], source: str) -> dict[str, Any] 
         message = SOURCE_TEMPORARILY_UNAVAILABLE_MESSAGE
     return {
         "status": health.status.value,
-        "last_success_at": health.last_success_at,
         "message": message,
-        "error_code": health.last_error_code,
     }
 
 

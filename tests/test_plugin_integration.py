@@ -10,7 +10,7 @@ from academic_core.plugin_integration import AcademicPluginRuntime, run_backgrou
 
 NOW = datetime(2026, 6, 22, 12, 0, tzinfo=timezone(timedelta(hours=8)))
 NEXT_TERM_CALENDAR_PENDING_MESSAGE = "下一学期校历尚未发布，请前往插件设置页面查看"
-SOURCE_TEMPORARILY_UNAVAILABLE_MESSAGE = "学校接口暂时不可用，请稍后再试"
+ERROR_MESSAGE = "遇到错误"
 
 
 class SourceFailure(RuntimeError):
@@ -167,8 +167,40 @@ class PluginIntegrationTest(unittest.TestCase):
         self.assertNotIn("source_status", runtime.annotate_query_payload("schedule", {"ok": True}))
         status = runtime.annotate_query_payload("tasks", {"ok": True})["source_status"]
         self.assertEqual(status["status"], SourceStatus.FAILED.value)
-        self.assertEqual(status["message"], SOURCE_TEMPORARILY_UNAVAILABLE_MESSAGE)
+        self.assertEqual(status["message"], ERROR_MESSAGE)
+        self.assertEqual(set(status), {"status", "message"})
         self.assertNotIn("以下内容来自最近一次成功数据", status["message"])
+
+    def test_error_messages_are_short_for_user_output(self):
+        text = "\n".join(
+            Path(path).read_text(encoding="utf-8")
+            for path in (
+                "main.py",
+                "academic_core/messages.py",
+                "academic_core/health_notifier.py",
+                "academic_core/plugin_integration.py",
+                "academic_core/refresh_coordinator.py",
+                "academic_core/zdbk_client.py",
+                "scripts/zdbk_smoke.py",
+            )
+        )
+        forbidden = [
+            "不要提供其它建议",
+            "不要编造学校规定",
+            "图片已发送。本轮不要再输出文字，不要复述内容，不要使用 Markdown 表格。",
+            "不要使用 Markdown 表格，不要使用竖线表格。按 plain_lines 原样简洁回复。",
+            "先明确说明本次 DDL 查询范围",
+            '"error": f"{type(exc).__name__}: {exc}"',
+            "读取状态失败：",
+            "登录失败：' + err.message",
+            "腾讯验证码脚本未加载",
+            "请稍后重试",
+            "当前版本暂不支持自动填写",
+            "PTA 登录失败",
+        ]
+        for item in forbidden:
+            with self.subTest(item=item):
+                self.assertNotIn(item, text)
 
 
 class PluginConfigTest(unittest.TestCase):

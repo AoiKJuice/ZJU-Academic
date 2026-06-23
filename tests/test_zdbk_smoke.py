@@ -116,7 +116,7 @@ class ZdbkSmokeTest(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["status"], "error")
         self.assertEqual(payload["error_code"], "captcha_required")
-        self.assertIn("验证码", payload["message"])
+        self.assertEqual(payload["message"], "遇到错误")
         combined_output = stdout.getvalue() + stderr.getvalue()
         self.assertNotIn("student", combined_output)
         self.assertNotIn("secret", combined_output)

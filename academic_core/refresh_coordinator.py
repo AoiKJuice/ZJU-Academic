@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
-from .messages import NEXT_TERM_CALENDAR_PENDING_MESSAGE
+from .messages import ERROR_MESSAGE, NEXT_TERM_CALENDAR_PENDING_MESSAGE
 from .models import SOURCE_NAMES, SourceHealth, SourceResult, SourceStatus, migrate_cache
 
 
@@ -115,7 +115,7 @@ class RefreshCoordinator:
         health.status = SourceStatus.FAILED
         health.last_attempt_at = now.isoformat()
         health.last_error_code = str(getattr(exc, "code", "") or "unexpected")
-        health.last_error_message = str(getattr(exc, "user_message", "") or str(exc))
+        health.last_error_message = ERROR_MESSAGE
         if not health.failure_started_at:
             health.failure_started_at = now.isoformat()
         health.consecutive_failures = previous_failures + 1

@@ -7,6 +7,7 @@ from academic_core.refresh_coordinator import RefreshCoordinator
 
 NOW = datetime(2026, 6, 22, 12, 0, tzinfo=timezone(timedelta(hours=8)))
 NEXT_TERM_CALENDAR_PENDING_MESSAGE = "下一学期校历尚未发布，请前往插件设置页面查看"
+ERROR_MESSAGE = "遇到错误"
 
 
 class SourceFailure(RuntimeError):
@@ -59,6 +60,7 @@ class RefreshCoordinatorTest(unittest.TestCase):
         self.assertEqual(health["schedule"]["status"], SourceStatus.FAILED.value)
         self.assertEqual(health["schedule"]["last_success_at"], "2026-06-20T10:53:00+08:00")
         self.assertEqual(health["schedule"]["last_error_code"], "upstream_http")
+        self.assertEqual(health["schedule"]["last_error_message"], ERROR_MESSAGE)
         self.assertEqual(result.cache["class_events"], [{"id": "old-class"}])
         self.assertEqual(result.cache["exam_events"], [{"id": "new-exam"}])
         self.assertEqual(result.cache["task_events"], [{"id": "new-task"}])

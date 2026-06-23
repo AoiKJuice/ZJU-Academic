@@ -25,14 +25,14 @@ from astrbot.core.star.star_tools import StarTools
 
 try:
     from .academic_core.health_notifier import HealthNotifier
-    from .academic_core.messages import NEXT_TERM_CALENDAR_PENDING_MESSAGE
+    from .academic_core.messages import ERROR_MESSAGE, NEXT_TERM_CALENDAR_PENDING_MESSAGE
     from .academic_core.models import SourceHealth, SourceResult, SourceStatus, migrate_cache
     from .academic_core.plugin_integration import source_status_payload
     from .academic_core.refresh_coordinator import RefreshCoordinator
     from .academic_core.zdbk_client import ZdbkClient
 except ImportError:
     from academic_core.health_notifier import HealthNotifier
-    from academic_core.messages import NEXT_TERM_CALENDAR_PENDING_MESSAGE
+    from academic_core.messages import ERROR_MESSAGE, NEXT_TERM_CALENDAR_PENDING_MESSAGE
     from academic_core.models import SourceHealth, SourceResult, SourceStatus, migrate_cache
     from academic_core.plugin_integration import source_status_payload
     from academic_core.refresh_coordinator import RefreshCoordinator
@@ -267,7 +267,7 @@ class ZjuAcademicPlugin(Star):
 
         async def public_pta_login(token: str):
             if token != self._ensure_pta_login_token():
-                response = jsonify({"ok": False, "error": "PTA 登录页密钥无效。"})
+                response = jsonify({"ok": False, "error": ERROR_MESSAGE})
                 response.status_code = 403
                 return response
             if request.method == "GET":
@@ -314,7 +314,7 @@ class ZjuAcademicPlugin(Star):
             action = str((payload or {}).get("action", "")).strip().lower() if isinstance(payload, dict) else ""
             if action == "clear":
                 await self._clear_pta_session()
-                return jsonify({"ok": True, "message": "已清除 PTA 已保存会话。"})
+                return jsonify({"ok": True, "message": "已清除"})
 
         return jsonify(self._pta_session_status_payload())
 
@@ -331,7 +331,7 @@ class ZjuAcademicPlugin(Star):
         if not password:
             return {"ok": False, "error": "缺少 PTA 密码。"}
         if not ticket or not rand_str:
-            return {"ok": False, "error": "PTA 登录需要先完成验证码。"}
+            return {"ok": False, "error": ERROR_MESSAGE}
 
         try:
             session_cookie = await asyncio.to_thread(
@@ -348,7 +348,7 @@ class ZjuAcademicPlugin(Star):
         updated_at = await self._save_pta_login_state(session_cookie)
         return {
             "ok": True,
-            "message": "PTA 登录成功，会话已保存。",
+            "message": "已保存",
             "session_saved": True,
             "updated_at": updated_at,
         }
@@ -364,7 +364,7 @@ class ZjuAcademicPlugin(Star):
     async def _save_pta_login_state(self, session_cookie: str) -> str:
         normalized = self._normalize_pta_cookie(session_cookie)
         if not normalized:
-            raise RuntimeError("PTA 登录未返回 PTASession。")
+            raise RuntimeError(ERROR_MESSAGE)
         updated_at = self._now().isoformat()
         self._state["pta_session"] = {
             "cookie": normalized,
@@ -436,10 +436,7 @@ class ZjuAcademicPlugin(Star):
         return payload
 
     def _sanitize_pta_error(self, exc: Exception) -> str:
-        text = self._clean_text(str(exc))
-        if not text:
-            return "PTA 登录失败。"
-        return re.sub(r"(?i)(password|passwd|pwd|密码)[=:：]\s*\S+", r"\1=[已隐藏]", text)
+        return ERROR_MESSAGE
 
     def _pta_login_page_html(self, public_login_path: str = "") -> str:
         public_path_json = json.dumps(public_login_path, ensure_ascii=False)
@@ -564,19 +561,19 @@ class ZjuAcademicPlugin(Star):
         if (data.saved_session_updated_at) parts.push('保存时间：' + data.saved_session_updated_at);
         setStatus(parts.join('\\n'), data.saved_session ? 'ok' : '');
       } catch (err) {
-        setStatus('读取状态失败：' + err.message, 'err');
+        setStatus('遇到错误', 'err');
       }
     }
 
     function startCaptcha(username, password) {
       if (!window.TencentCaptcha) {
-        setStatus('腾讯验证码脚本未加载，检查服务器网络或浏览器拦截。', 'err');
+        setStatus('遇到错误', 'err');
         button.disabled = false;
         return;
       }
       const captcha = new TencentCaptcha('194593025', async function(res) {
         if (!res || res.ret !== 0) {
-          setStatus('验证码未完成。', 'err');
+          setStatus('遇到错误', 'err');
           button.disabled = false;
           return;
         }
@@ -591,9 +588,9 @@ class ZjuAcademicPlugin(Star):
               randStr: res.randstr
             })
           });
-          setStatus((data.message || 'PTA 登录成功。') + '\\n保存时间：' + (data.updated_at || ''), 'ok');
+          setStatus(data.message || '已保存', 'ok');
         } catch (err) {
-          setStatus('登录失败：' + err.message, 'err');
+          setStatus('遇到错误', 'err');
         } finally {
           button.disabled = false;
         }
@@ -631,7 +628,7 @@ class ZjuAcademicPlugin(Star):
             {
                 "ok": False,
                 "error": self._query_denied_text(),
-                "reply_instruction": "直接回复这句错误信息，不要提供其它建议，不要编造学校规定。",
+                "reply_instruction": "只回复 error。",
             },
             ensure_ascii=False,
             indent=2,
@@ -697,7 +694,7 @@ class ZjuAcademicPlugin(Star):
         except Exception as exc:
             logger.exception("zju llm refresh failed")
             return json.dumps(
-                {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                {"ok": False, "error": ERROR_MESSAGE},
                 ensure_ascii=False,
                 indent=2,
             )
@@ -730,7 +727,7 @@ class ZjuAcademicPlugin(Star):
                 "action": "bind",
                 "bound": True,
                 "session_id": umo,
-                "reply_instruction": "直接说明已绑定当前会话的浙大学业提醒。",
+                "reply_instruction": "只回复结果。",
             }
             return json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -744,7 +741,7 @@ class ZjuAcademicPlugin(Star):
                 "was_bound": was_bound,
                 "bound": False,
                 "session_id": umo,
-                "reply_instruction": "直接说明当前会话已解绑浙大学业提醒；如果 was_bound 为 false，说明原本就未绑定。",
+                "reply_instruction": "只回复结果。",
             }
             return json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -755,7 +752,7 @@ class ZjuAcademicPlugin(Star):
             "runtime_bound": umo in bindings,
             "session_id": umo,
             "bound_sessions_count": len(self._target_bindings()),
-            "reply_instruction": "直接说明当前会话是否已绑定浙大学业提醒。",
+            "reply_instruction": "只回复结果。",
         }
         return json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -775,7 +772,7 @@ class ZjuAcademicPlugin(Star):
         except Exception as exc:
             logger.exception("zju llm query refresh failed")
             return json.dumps(
-                {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                {"ok": False, "error": ERROR_MESSAGE},
                 ensure_ascii=False,
                 indent=2,
             )
@@ -808,9 +805,9 @@ class ZjuAcademicPlugin(Star):
                 "item_count": len(raw_items),
             }
             if image_sent:
-                payload["reply_instruction"] = "图片已发送。本轮不要再输出文字，不要复述内容，不要使用 Markdown 表格。"
+                payload["reply_instruction"] = "不再输出文字。"
             else:
-                payload["reply_instruction"] = "不要使用 Markdown 表格，不要使用竖线表格。按 plain_lines 原样简洁回复。"
+                payload["reply_instruction"] = "按 plain_lines 回复。"
                 payload["plain_lines"] = self._class_plain_lines(raw_items)
                 payload["items"] = [self._class_payload(item) for item in raw_items]
             payload = self._annotate_source_status(cache, "schedule", payload)
@@ -831,9 +828,9 @@ class ZjuAcademicPlugin(Star):
                 "item_count": len(raw_items),
             }
             if image_sent:
-                payload["reply_instruction"] = "图片已发送。本轮不要再输出文字，不要复述内容，不要使用 Markdown 表格。"
+                payload["reply_instruction"] = "不再输出文字。"
             else:
-                payload["reply_instruction"] = "不要使用 Markdown 表格，不要使用竖线表格。按 plain_lines 原样简洁回复。"
+                payload["reply_instruction"] = "按 plain_lines 回复。"
                 payload["plain_lines"] = self._exam_plain_lines(raw_items)
                 payload["items"] = [self._exam_payload(item) for item in raw_items]
             payload = self._annotate_source_status(cache, "exams", payload)
@@ -858,12 +855,9 @@ class ZjuAcademicPlugin(Star):
                 "item_count": len(raw_items),
             }
             if image_sent:
-                payload["reply_instruction"] = "图片已发送。本轮不要再输出文字，不要复述内容，不要使用 Markdown 表格。"
+                payload["reply_instruction"] = "不再输出文字。"
             else:
-                payload["reply_instruction"] = (
-                    f"先明确说明本次 DDL 查询范围是「{self._display_range_label(label)}」。"
-                    "不要使用 Markdown 表格，不要使用竖线表格。按 plain_lines 原样简洁回复。"
-                )
+                payload["reply_instruction"] = "按 plain_lines 回复。"
                 payload["plain_lines"] = self._task_plain_lines(raw_items)
                 payload["items"] = [self._task_payload(item) for item in raw_items]
             status_source = "pta_tasks" if normalized_type == "pta_tasks" else "tasks"
@@ -873,7 +867,7 @@ class ZjuAcademicPlugin(Star):
         return json.dumps(
             {
                 "ok": False,
-                "error": f"未知查询类型：{data_type}",
+                "error": ERROR_MESSAGE,
                 "supported_data_type": ["schedule", "exams", "tasks", "pta_tasks"],
             },
             ensure_ascii=False,
@@ -3207,14 +3201,14 @@ class PintiaClient:
         payload = resp.json()
         problem_sets = payload.get("problemSets")
         if not isinstance(problem_sets, list):
-            raise RuntimeError("PTA 待办接口返回格式异常。")
+            raise RuntimeError(ERROR_MESSAGE)
         return [item for item in problem_sets if isinstance(item, dict)]
 
     def _ensure_session(self):
         if self.cookie_header:
             return
         if not self.username or not self.password:
-            raise RuntimeError("PTA 尚未登录。")
+            raise RuntimeError(ERROR_MESSAGE)
 
         self.login()
 
@@ -3235,7 +3229,7 @@ class PintiaClient:
 
         session_value = self._read_session_cookie(resp)
         if not session_value:
-            raise RuntimeError("PTA 登录未返回 PTASession，可能需要验证码、短信验证或账号类型不支持。")
+            raise RuntimeError(ERROR_MESSAGE)
         self.cookie_header = self._normalize_cookie(session_value)
         return session_value
 
@@ -3258,23 +3252,7 @@ class PintiaClient:
         return payload
 
     def _login_error(self, resp: requests.Response) -> str:
-        detail = ""
-        try:
-            payload = resp.json()
-        except Exception:
-            payload = None
-        if isinstance(payload, dict):
-            for key in ("message", "error", "code"):
-                value = payload.get(key)
-                if value:
-                    detail = str(value)
-                    break
-        if not detail:
-            detail = resp.text[:200] if hasattr(resp, "text") else ""
-        detail = re.sub(r"\s+", " ", str(detail)).strip()
-        if detail:
-            return f"PTA 登录失败：HTTP {resp.status_code}，{detail}"
-        return f"PTA 登录失败：HTTP {resp.status_code}"
+        return ERROR_MESSAGE
 
     def _read_session_cookie(self, resp: requests.Response) -> str:
         cookie_value = self.session.cookies.get("PTASession") or resp.cookies.get("PTASession")
