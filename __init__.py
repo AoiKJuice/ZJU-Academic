@@ -1,1 +1,1 @@
-"""AstrBot plugin package for Zhejiang University academic data."""
+"""AstrBot plugin package for ZJU-Academic zdbk data."""

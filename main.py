@@ -186,7 +186,7 @@ class LegacySSLAdapter(HTTPAdapter):
 @register(
     "astrbot_plugin_zju_academic",
     "OpenAI",
-    "Fetch Zhejiang University classes, exams, and 学在浙大 tasks with reminder support.",
+    "【ZJU-Academic】查询 zdbk数据、学在浙大任务和 PTA 待办，并发送提醒。",
     "0.3.4",
     "local",
 )
@@ -243,13 +243,13 @@ class ZjuAcademicPlugin(Star):
             "/zju-academic/pta-login",
             self._pta_login_web_api,
             ["GET", "POST"],
-            "ZJU Academic PTA login page and login endpoint.",
+            "【ZJU-Academic】PTA 登录页面和登录接口。",
         )
         register_web_api(
             "/zju-academic/pta-session",
             self._pta_session_web_api,
             ["GET", "POST"],
-            "ZJU Academic PTA saved session status.",
+            "【ZJU-Academic】PTA 会话状态。",
         )
 
     async def _register_public_pta_login_route_later(self):
@@ -664,7 +664,7 @@ class ZjuAcademicPlugin(Star):
 
     @filter.llm_tool(name="zju_academic_status")
     async def llm_status(self, event: AstrMessageEvent) -> str:
-        """获取 ZJU-Academic 插件状态、缓存数量、提醒配置、PTA 登录入口和当前会话 ID。用户询问 PTA 登录、配置、绑定、提醒是否生效、zdbk数据是否已刷新时使用。"""
+        """【ZJU-Academic】获取插件状态、缓存数量、提醒配置、PTA 登录入口和当前会话 ID。用户询问 PTA 登录、配置、绑定、提醒是否生效、zdbk数据是否已刷新时使用。"""
         if not self._is_query_allowed(event):
             return self._query_denied_payload()
         bindings = self._target_bindings()
@@ -730,7 +730,7 @@ class ZjuAcademicPlugin(Star):
 
     @filter.llm_tool(name="zju_academic_binding")
     async def llm_binding(self, event: AstrMessageEvent, action: str = "status") -> str:
-        """管理当前会话的 ZJU-Academic 提醒绑定。用户自然语言要求绑定、解绑、开启提醒、关闭提醒或查看当前会话绑定状态时使用。
+        """【ZJU-Academic】管理当前会话的提醒绑定。用户自然语言要求绑定、解绑、开启提醒、关闭提醒或查看当前会话绑定状态时使用。
 
         Args:
             action(string): bind、unbind 或 status。绑定/开启提醒传 bind；解绑/关闭提醒传 unbind；查看是否绑定传 status。
@@ -786,7 +786,7 @@ class ZjuAcademicPlugin(Star):
 
     @filter.llm_tool(name="zju_academic_query")
     async def llm_query(self, event: AstrMessageEvent, data_type: str, range: str = "", force_refresh: bool = False) -> str:
-        """查询 zdbk数据、DDL、学在浙大任务或 PTA 待办。用户问 DDL、ddl、截止、任务时默认查询学在浙大和 PTA 的整合结果；用户明确说 PTA、Pintia、拼题A 时只查 PTA。
+        """【ZJU-Academic】查询 zdbk数据、DDL、学在浙大任务或 PTA 待办。用户问 DDL、ddl、截止、任务时默认查询学在浙大和 PTA 的整合结果；用户明确说 PTA、Pintia、拼题A 时只查 PTA。
 
         Args:
             data_type(string): 查询类型。可填 schedule、classes、课表、exam、exams、考试、task、tasks、任务、pta、pintia、拼题A。

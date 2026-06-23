@@ -1,7 +1,7 @@
 name: astrbot_plugin_zju_academic
-display_name: ZJU Academic
-desc: Fetch Zhejiang University schedule, exams, and 学在浙大 tasks, then send timed reminders.
-help: Configure bound_sessions in plugin settings to receive class, exam, and task reminders.
+display_name: ZJU-Academic
+desc: 【ZJU-Academic】查询 zdbk数据、学在浙大任务和 PTA 待办，并发送提醒。
+help: 【ZJU-Academic】在插件设置中配置 bound_sessions 后接收课表、考试和任务提醒。
 version: 0.4.0
 author: OpenAI
 repo: https://github.com/AoiKJuice/ZJU-Academic
