@@ -55,6 +55,12 @@
         "type": "bool",
         "default": true
       },
+      "manual_calendar_enabled": {
+        "description": "启用人工校历日期",
+        "hint": "仅用于第三方校历暂未发布的学期。启用后，每个学期必须同时填写开始和结束日期。",
+        "type": "bool",
+        "default": false
+      },
       "manual_calendar_year": {
         "description": "当前学年",
         "type": "string",
@@ -68,7 +74,15 @@
         "type": "string",
         "default": "2025-09-15",
         "condition": {
-          "auto_calendar_enabled": false
+          "manual_calendar_enabled": true
+        }
+      },
+      "manual_autumn_end": {
+        "description": "秋学期结束日期",
+        "type": "string",
+        "default": "",
+        "condition": {
+          "manual_calendar_enabled": true
         }
       },
       "manual_winter_begin": {
@@ -76,7 +90,15 @@
         "type": "string",
         "default": "2025-11-10",
         "condition": {
-          "auto_calendar_enabled": false
+          "manual_calendar_enabled": true
+        }
+      },
+      "manual_winter_end": {
+        "description": "冬学期结束日期",
+        "type": "string",
+        "default": "",
+        "condition": {
+          "manual_calendar_enabled": true
         }
       },
       "manual_spring_begin": {
@@ -84,7 +106,15 @@
         "type": "string",
         "default": "2026-03-02",
         "condition": {
-          "auto_calendar_enabled": false
+          "manual_calendar_enabled": true
+        }
+      },
+      "manual_spring_end": {
+        "description": "春学期结束日期",
+        "type": "string",
+        "default": "",
+        "condition": {
+          "manual_calendar_enabled": true
         }
       },
       "manual_summer_begin": {
@@ -92,7 +122,15 @@
         "type": "string",
         "default": "2026-04-27",
         "condition": {
-          "auto_calendar_enabled": false
+          "manual_calendar_enabled": true
+        }
+      },
+      "manual_summer_end": {
+        "description": "夏学期结束日期",
+        "type": "string",
+        "default": "",
+        "condition": {
+          "manual_calendar_enabled": true
         }
       },
       "cache_ttl_minutes": {

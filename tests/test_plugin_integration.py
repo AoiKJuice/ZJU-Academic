@@ -1,6 +1,8 @@
 import asyncio
+import json
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from academic_core.models import SourceResult, SourceStatus, migrate_cache
 from academic_core.plugin_integration import AcademicPluginRuntime, run_background_tick
@@ -164,6 +166,33 @@ class PluginIntegrationTest(unittest.TestCase):
             runtime.annotate_query_payload("tasks", {"ok": True})["source_status"]["status"],
             SourceStatus.FAILED.value,
         )
+
+
+class PluginConfigTest(unittest.TestCase):
+    def test_manual_calendar_config_keys_exist_with_safe_defaults(self):
+        schema = json.loads(Path("_conf_schema.json").read_text(encoding="utf-8"))
+        advanced = schema["advanced"]["items"]
+        expected_keys = {
+            "manual_calendar_enabled",
+            "manual_autumn_begin",
+            "manual_autumn_end",
+            "manual_winter_begin",
+            "manual_winter_end",
+            "manual_spring_begin",
+            "manual_spring_end",
+            "manual_summer_begin",
+            "manual_summer_end",
+        }
+
+        self.assertTrue(expected_keys.issubset(set(advanced)))
+        self.assertIs(advanced["manual_calendar_enabled"]["default"], False)
+        for key in (
+            "manual_autumn_end",
+            "manual_winter_end",
+            "manual_spring_end",
+            "manual_summer_end",
+        ):
+            self.assertEqual(advanced[key]["default"], "")
 
 
 if __name__ == "__main__":

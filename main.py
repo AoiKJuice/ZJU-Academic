@@ -3000,19 +3000,21 @@ class ZjuAcademicPlugin(Star):
         }
 
     def _manual_calendar_config(self) -> dict[str, Any]:
+        if not self._cfg_bool("manual_calendar_enabled", False):
+            return {"source": "manual", "updated_at": "", "term_configs": [], "holiday_tweaks": []}
         year = self._cfg_str("manual_calendar_year", "2025-2026")
-        starts = (
-            (TERM_AUTUMN, self._cfg_str("manual_autumn_begin", "2025-09-15")),
-            (TERM_WINTER, self._cfg_str("manual_winter_begin", "2025-11-10")),
-            (TERM_SPRING, self._cfg_str("manual_spring_begin", "2026-03-02")),
-            (TERM_SUMMER, self._cfg_str("manual_summer_begin", "2026-04-27")),
+        terms = (
+            (TERM_AUTUMN, self._cfg_str("manual_autumn_begin", ""), self._cfg_str("manual_autumn_end", "")),
+            (TERM_WINTER, self._cfg_str("manual_winter_begin", ""), self._cfg_str("manual_winter_end", "")),
+            (TERM_SPRING, self._cfg_str("manual_spring_begin", ""), self._cfg_str("manual_spring_end", "")),
+            (TERM_SUMMER, self._cfg_str("manual_summer_begin", ""), self._cfg_str("manual_summer_end", "")),
         )
         term_configs: list[dict[str, Any]] = []
-        for term, raw_begin in starts:
+        for term, raw_begin, raw_end in terms:
             begin = self._parse_flexible_date(raw_begin)
-            if not begin:
+            end = self._parse_flexible_date(raw_end)
+            if not begin or not end or end < begin:
                 continue
-            end = begin + timedelta(days=55)
             term_configs.append(
                 {
                     "year": year,
