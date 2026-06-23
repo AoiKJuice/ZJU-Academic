@@ -6,6 +6,7 @@ from academic_core.models import SourceHealth, SourceStatus
 
 
 NOW = datetime(2026, 6, 22, 12, 0, tzinfo=timezone(timedelta(hours=8)))
+NEXT_TERM_CALENDAR_PENDING_MESSAGE = "下一学期校历尚未发布，请前往插件设置页面查看"
 
 
 def healthy(last_success_at="2026-06-22T11:50:00+08:00"):
@@ -31,7 +32,7 @@ def waiting_calendar():
         last_attempt_at=NOW.isoformat(),
         last_success_at="2026-06-20T10:53:00+08:00",
         last_error_code="calendar_pending",
-        last_error_message="下一学期校历尚未发布。",
+        last_error_message=NEXT_TERM_CALENDAR_PENDING_MESSAGE,
         failure_started_at=NOW.isoformat(),
         next_retry_at=(NOW + timedelta(hours=6)).isoformat(),
         consecutive_failures=1,
@@ -48,12 +49,12 @@ class HealthNotifierTest(unittest.TestCase):
         self.assertIn("课表", failure_notes[0].text)
         self.assertIn("学校接口返回 HTTP 504", failure_notes[0].text)
         self.assertIn("2026-06-20T10:53:00+08:00", failure_notes[0].text)
-        self.assertIn("最近一次成功数据", failure_notes[0].text)
-        self.assertIn("可执行操作", failure_notes[0].text)
+        self.assertNotIn("当前会使用最近一次成功数据", failure_notes[0].text)
+        self.assertNotIn("可执行操作", failure_notes[0].text)
 
         pending_notes = notifier.pending(healthy(), waiting_calendar(), ["session-1"], NOW)
         self.assertEqual(len(pending_notes), 1)
-        self.assertIn("校历", pending_notes[0].text)
+        self.assertEqual(pending_notes[0].text, NEXT_TERM_CALENDAR_PENDING_MESSAGE)
 
     def test_same_error_dedupes_for_24_hours_then_repeats_daily(self):
         notifier = HealthNotifier(source="schedule", source_label="课表")

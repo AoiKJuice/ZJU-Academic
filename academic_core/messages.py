@@ -1,0 +1,2 @@
+NEXT_TERM_CALENDAR_PENDING_MESSAGE = "下一学期校历尚未发布，请前往插件设置页面查看"
+SOURCE_TEMPORARILY_UNAVAILABLE_MESSAGE = "学校接口暂时不可用，请稍后再试"

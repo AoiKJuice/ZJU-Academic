@@ -25,12 +25,14 @@ from astrbot.core.star.star_tools import StarTools
 
 try:
     from .academic_core.health_notifier import HealthNotifier
+    from .academic_core.messages import NEXT_TERM_CALENDAR_PENDING_MESSAGE
     from .academic_core.models import SourceHealth, SourceResult, SourceStatus, migrate_cache
     from .academic_core.plugin_integration import source_status_payload
     from .academic_core.refresh_coordinator import RefreshCoordinator
     from .academic_core.zdbk_client import ZdbkClient
 except ImportError:
     from academic_core.health_notifier import HealthNotifier
+    from academic_core.messages import NEXT_TERM_CALENDAR_PENDING_MESSAGE
     from academic_core.models import SourceHealth, SourceResult, SourceStatus, migrate_cache
     from academic_core.plugin_integration import source_status_payload
     from academic_core.refresh_coordinator import RefreshCoordinator
@@ -1069,14 +1071,25 @@ class ZjuAcademicPlugin(Star):
         calendar_holder: dict[str, Any] = {}
         refresh_meta: dict[str, Any] = {}
         sources: dict[str, Any] = {}
-        client: ZdbkClient | None = None
+        client_holder: dict[str, Any] = {}
 
         username = self._username()
         password = self._password()
-        needs_zju_client = bool(username and password and (refresh_academic or refresh_tasks))
-        if needs_zju_client:
-            client = self._build_zju_client()
-            client.login()
+        has_zju_credentials = bool(username and password)
+
+        def zju_client() -> ZdbkClient:
+            if "client" in client_holder:
+                return client_holder["client"]
+            if "error" in client_holder:
+                raise client_holder["error"]
+            try:
+                client = self._build_zju_client()
+                client.login()
+            except Exception as exc:
+                client_holder["error"] = exc
+                raise
+            client_holder["client"] = client
+            return client
 
         def calendar_config() -> dict[str, Any]:
             if "config" not in calendar_holder:
@@ -1086,7 +1099,7 @@ class ZjuAcademicPlugin(Star):
         if refresh_academic:
             sources["calendar"] = lambda: SourceResult(data=calendar_config())
 
-            if client:
+            if has_zju_credentials:
                 def fetch_schedule() -> SourceResult:
                     now = self._now()
                     config = calendar_config()
@@ -1099,10 +1112,11 @@ class ZjuAcademicPlugin(Star):
                             },
                             metadata={
                                 "status": "calendar_pending",
-                                "message": "下一学期校历尚未发布。",
+                                "message": NEXT_TERM_CALENDAR_PENDING_MESSAGE,
                             },
                         )
 
+                    client = zju_client()
                     classes: list[dict[str, Any]] = []
                     for academic_year, term in self._unique_class_terms(term_configs):
                         classes.extend(client.get_classes(academic_year, term))
@@ -1121,6 +1135,7 @@ class ZjuAcademicPlugin(Star):
 
                 def fetch_exams() -> SourceResult:
                     now = self._now()
+                    client = zju_client()
                     exams = client.get_exams()
                     exam_events = [
                         item
@@ -1135,8 +1150,9 @@ class ZjuAcademicPlugin(Star):
                 sources["exams"] = fetch_exams
 
         if refresh_tasks:
-            if client:
+            if has_zju_credentials:
                 def fetch_tasks() -> SourceResult:
+                    client = zju_client()
                     return SourceResult(data=self._filter_task_horizon(self._fetch_courses_task_events_sync(client)))
 
                 sources["tasks"] = fetch_tasks

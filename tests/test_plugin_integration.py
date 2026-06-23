@@ -9,6 +9,8 @@ from academic_core.plugin_integration import AcademicPluginRuntime, run_backgrou
 
 
 NOW = datetime(2026, 6, 22, 12, 0, tzinfo=timezone(timedelta(hours=8)))
+NEXT_TERM_CALENDAR_PENDING_MESSAGE = "下一学期校历尚未发布，请前往插件设置页面查看"
+SOURCE_TEMPORARILY_UNAVAILABLE_MESSAGE = "学校接口暂时不可用，请稍后再试"
 
 
 class SourceFailure(RuntimeError):
@@ -104,7 +106,7 @@ class PluginIntegrationTest(unittest.TestCase):
                     },
                     metadata={
                         "status": "calendar_pending",
-                        "message": "下一学期校历尚未发布。",
+                        "message": NEXT_TERM_CALENDAR_PENDING_MESSAGE,
                     },
                 )
             }
@@ -114,6 +116,7 @@ class PluginIntegrationTest(unittest.TestCase):
         self.assertEqual(runtime.cache["class_events"], [{"id": "old-class"}])
         payload = runtime.annotate_query_payload("schedule", {"ok": True})
         self.assertEqual(payload["source_status"]["status"], SourceStatus.WAITING_CALENDAR.value)
+        self.assertEqual(payload["source_status"]["message"], NEXT_TERM_CALENDAR_PENDING_MESSAGE)
 
     def test_calendar_recovery_replaces_schedule_events_and_clears_query_annotation(self):
         runtime = AcademicPluginRuntime(
@@ -162,10 +165,10 @@ class PluginIntegrationTest(unittest.TestCase):
         )
 
         self.assertNotIn("source_status", runtime.annotate_query_payload("schedule", {"ok": True}))
-        self.assertEqual(
-            runtime.annotate_query_payload("tasks", {"ok": True})["source_status"]["status"],
-            SourceStatus.FAILED.value,
-        )
+        status = runtime.annotate_query_payload("tasks", {"ok": True})["source_status"]
+        self.assertEqual(status["status"], SourceStatus.FAILED.value)
+        self.assertEqual(status["message"], SOURCE_TEMPORARILY_UNAVAILABLE_MESSAGE)
+        self.assertNotIn("以下内容来自最近一次成功数据", status["message"])
 
 
 class PluginConfigTest(unittest.TestCase):
@@ -200,6 +203,17 @@ class PluginImportStyleTest(unittest.TestCase):
         text = Path("main.py").read_text(encoding="utf-8")
         self.assertIn("from .academic_core.health_notifier import HealthNotifier", text)
         self.assertIn("from .academic_core.zdbk_client import ZdbkClient", text)
+
+    def test_main_uses_lazy_zjuam_login_inside_source_fetchers(self):
+        text = Path("main.py").read_text(encoding="utf-8")
+        self.assertIn("def zju_client() -> ZdbkClient:", text)
+        self.assertIn('client_holder["error"] = exc', text)
+        self.assertNotIn("client.login()\n\n        def calendar_config", text)
+
+    def test_main_uses_settings_page_message_for_next_term_calendar_pending(self):
+        text = Path("main.py").read_text(encoding="utf-8")
+        self.assertIn("NEXT_TERM_CALENDAR_PENDING_MESSAGE", text)
+        self.assertNotIn('"message": "下一学期校历尚未发布。"', text)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
+from .messages import NEXT_TERM_CALENDAR_PENDING_MESSAGE
 from .models import SOURCE_NAMES, SourceHealth, SourceResult, SourceStatus, migrate_cache
 
 
@@ -142,9 +143,7 @@ class RefreshCoordinator:
         health.status = SourceStatus.WAITING_CALENDAR
         health.last_attempt_at = now.isoformat()
         health.last_error_code = "calendar_pending"
-        health.last_error_message = str(
-            result.metadata.get("message") or "学期安排尚未发布，暂不生成具体课程日期。"
-        )
+        health.last_error_message = NEXT_TERM_CALENDAR_PENDING_MESSAGE
         if not health.failure_started_at:
             health.failure_started_at = now.isoformat()
         health.consecutive_failures = previous_failures + 1

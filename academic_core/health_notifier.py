@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from .messages import NEXT_TERM_CALENDAR_PENDING_MESSAGE
 from .models import SourceHealth, SourceStatus
 
 
@@ -113,7 +114,7 @@ class HealthNotifier:
 
     def _problem_text(self, health: SourceHealth) -> str:
         if health.status == SourceStatus.WAITING_CALENDAR:
-            headline = f"{self.source_label}等待校历：{self._sanitize(health.last_error_message)}"
+            return NEXT_TERM_CALENDAR_PENDING_MESSAGE
         else:
             headline = f"{self.source_label}数据异常：{self._sanitize(health.last_error_message)}"
         last_success = health.last_success_at or "暂无"
@@ -122,9 +123,7 @@ class HealthNotifier:
             [
                 headline,
                 f"最后成功：{last_success}",
-                "当前会使用最近一次成功数据；没有可靠日期的数据不会生成提醒。",
                 f"下次自动尝试：{next_retry}",
-                "可执行操作：稍后手动刷新；如提示验证码，需要人工登录处理。",
             ]
         )
 

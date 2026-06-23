@@ -6,6 +6,7 @@ from academic_core.refresh_coordinator import RefreshCoordinator
 
 
 NOW = datetime(2026, 6, 22, 12, 0, tzinfo=timezone(timedelta(hours=8)))
+NEXT_TERM_CALENDAR_PENDING_MESSAGE = "下一学期校历尚未发布，请前往插件设置页面查看"
 
 
 class SourceFailure(RuntimeError):
@@ -142,7 +143,7 @@ class RefreshCoordinatorTest(unittest.TestCase):
                 },
                 metadata={
                     "status": "calendar_pending",
-                    "message": "下一学期校历尚未发布。",
+                    "message": NEXT_TERM_CALENDAR_PENDING_MESSAGE,
                 },
             )
 
@@ -156,6 +157,23 @@ class RefreshCoordinatorTest(unittest.TestCase):
         self.assertEqual(result.cache["source_data"]["schedule_templates"], [{"id": "template-1"}])
         self.assertEqual(result.cache["source_data"]["schedule_events"], [{"id": "old-class"}])
         self.assertEqual(result.cache["class_events"], [{"id": "old-class"}])
+
+    def test_calendar_pending_default_message_points_to_settings_page(self):
+        cache = migrate_cache({"class_events": [{"id": "old-class"}]})
+
+        result = RefreshCoordinator(cache, now_provider=lambda: NOW).refresh(
+            {
+                "schedule": lambda: SourceResult(
+                    data={"templates": [], "events": []},
+                    metadata={"status": "calendar_pending"},
+                )
+            }
+        )
+
+        self.assertEqual(
+            result.cache["source_health"]["schedule"]["last_error_message"],
+            NEXT_TERM_CALENDAR_PENDING_MESSAGE,
+        )
 
     def test_refresh_returns_a_copy_so_save_failures_do_not_partially_replace_input(self):
         original = migrate_cache({"class_events": [{"id": "old-class"}]})

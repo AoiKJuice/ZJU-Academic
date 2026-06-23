@@ -4,6 +4,7 @@ import copy
 from datetime import datetime
 from typing import Any, Awaitable, Callable
 
+from .messages import NEXT_TERM_CALENDAR_PENDING_MESSAGE, SOURCE_TEMPORARILY_UNAVAILABLE_MESSAGE
 from .models import SourceHealth, SourceStatus, migrate_cache
 from .refresh_coordinator import Fetcher, RefreshCoordinator, RefreshResult, SourceTransition
 
@@ -69,9 +70,9 @@ def source_status_payload(cache: dict[str, Any], source: str) -> dict[str, Any] 
     if health.status == SourceStatus.HEALTHY:
         return None
     if health.status == SourceStatus.WAITING_CALENDAR:
-        message = "学期安排尚未发布，以下内容来自最近一次成功数据。"
+        message = NEXT_TERM_CALENDAR_PENDING_MESSAGE
     else:
-        message = "学校接口暂时不可用，以下内容来自最近一次成功数据。"
+        message = SOURCE_TEMPORARILY_UNAVAILABLE_MESSAGE
     return {
         "status": health.status.value,
         "last_success_at": health.last_success_at,
