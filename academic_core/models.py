@@ -68,6 +68,12 @@ class SourceHealth:
         )
 
 
+@dataclass
+class SourceResult:
+    data: Any
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 def migrate_cache(cache: Any) -> dict[str, Any]:
     migrated = copy.deepcopy(cache) if isinstance(cache, dict) else {}
     migrated["schema_version"] = 2

@@ -1,5 +1,5 @@
 """Core logic for the ZJU Academic AstrBot plugin."""
 
-from .models import SourceHealth, SourceStatus, migrate_cache
+from .models import SourceHealth, SourceResult, SourceStatus, migrate_cache
 
-__all__ = ["SourceHealth", "SourceStatus", "migrate_cache"]
+__all__ = ["SourceHealth", "SourceResult", "SourceStatus", "migrate_cache"]
