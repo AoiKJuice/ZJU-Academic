@@ -3,6 +3,9 @@ import unittest
 from academic_core.models import SourceHealth, SourceStatus, migrate_cache
 
 
+NEXT_TERM_CALENDAR_PENDING_MESSAGE = "下一学期校历尚未发布，请前往插件设置页面查看"
+
+
 class ModelsTest(unittest.TestCase):
     def test_source_health_round_trip(self):
         health = SourceHealth(
@@ -35,6 +38,24 @@ class ModelsTest(unittest.TestCase):
         self.assertEqual(
             migrated["source_health"]["tasks"]["last_success_at"],
             old["task_refresh"],
+        )
+
+    def test_migrate_waiting_calendar_message_points_to_settings_page(self):
+        old = {
+            "source_health": {
+                "schedule": {
+                    "status": "waiting_calendar",
+                    "last_error_code": "calendar_pending",
+                    "last_error_message": "下一学期校历尚未发布。",
+                }
+            }
+        }
+
+        migrated = migrate_cache(old)
+
+        self.assertEqual(
+            migrated["source_health"]["schedule"]["last_error_message"],
+            NEXT_TERM_CALENDAR_PENDING_MESSAGE,
         )
 
 

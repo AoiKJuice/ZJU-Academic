@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from .messages import NEXT_TERM_CALENDAR_PENDING_MESSAGE
+
 
 SOURCE_NAMES = ("calendar", "schedule", "exams", "tasks", "pta_tasks")
 
@@ -95,6 +97,9 @@ def migrate_cache(cache: Any) -> dict[str, Any]:
         health = SourceHealth.from_dict(existing_health.get(source_name))
         if not health.last_success_at:
             health.last_success_at = defaults[source_name]
+        if health.status == SourceStatus.WAITING_CALENDAR:
+            health.last_error_code = "calendar_pending"
+            health.last_error_message = NEXT_TERM_CALENDAR_PENDING_MESSAGE
         source_health[source_name] = health.to_dict()
     migrated["source_health"] = source_health
 
