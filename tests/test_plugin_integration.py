@@ -195,5 +195,12 @@ class PluginConfigTest(unittest.TestCase):
             self.assertEqual(advanced[key]["default"], "")
 
 
+class PluginImportStyleTest(unittest.TestCase):
+    def test_main_uses_package_relative_core_imports_for_astrbot_loader(self):
+        text = Path("main.py").read_text(encoding="utf-8")
+        self.assertIn("from .academic_core.health_notifier import HealthNotifier", text)
+        self.assertIn("from .academic_core.zdbk_client import ZdbkClient", text)
+
+
 if __name__ == "__main__":
     unittest.main()

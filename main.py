@@ -23,11 +23,18 @@ from astrbot.api.message_components import Plain
 from astrbot.api.star import Context, Star, register
 from astrbot.core.star.star_tools import StarTools
 
-from academic_core.health_notifier import HealthNotifier
-from academic_core.models import SourceHealth, SourceResult, SourceStatus, migrate_cache
-from academic_core.plugin_integration import source_status_payload
-from academic_core.refresh_coordinator import RefreshCoordinator
-from academic_core.zdbk_client import ZdbkClient
+try:
+    from .academic_core.health_notifier import HealthNotifier
+    from .academic_core.models import SourceHealth, SourceResult, SourceStatus, migrate_cache
+    from .academic_core.plugin_integration import source_status_payload
+    from .academic_core.refresh_coordinator import RefreshCoordinator
+    from .academic_core.zdbk_client import ZdbkClient
+except ImportError:
+    from academic_core.health_notifier import HealthNotifier
+    from academic_core.models import SourceHealth, SourceResult, SourceStatus, migrate_cache
+    from academic_core.plugin_integration import source_status_payload
+    from academic_core.refresh_coordinator import RefreshCoordinator
+    from academic_core.zdbk_client import ZdbkClient
 
 
 TERM_AUTUMN = 0
