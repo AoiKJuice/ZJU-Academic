@@ -320,11 +320,11 @@ class ZdbkClient:
                 "教务系统登录后没有返回有效会话，请稍后重试。",
                 "ZDBK cookie JSESSIONID missing for /jwglxt",
             )
-        if not self.has_cookie("route", "zdbk.zju.edu.cn", "/jwglxt"):
+        if not self.has_cookie("route", "zdbk.zju.edu.cn"):
             raise ZdbkError(
                 "auth_session",
                 "教务系统登录后没有返回路由会话，请稍后重试。",
-                "ZDBK cookie route missing for /jwglxt",
+                "ZDBK cookie route missing",
             )
 
     def _ensure_courses_session(self) -> None:
