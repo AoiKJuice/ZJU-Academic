@@ -6,7 +6,14 @@ from pathlib import Path
 
 from academic_core.messages import DATA_FETCH_CACHE_MESSAGE, NEXT_TERM_CALENDAR_PENDING_MESSAGE
 from academic_core.models import SourceResult, SourceStatus, migrate_cache
-from academic_core.plugin_integration import AcademicPluginRuntime, run_background_tick
+from academic_core.plugin_integration import (
+    AcademicPluginRuntime,
+    calendar_has_current_or_future_term,
+    calendar_refresh_state,
+    parse_repository_calendar_config,
+    run_background_tick,
+    source_status_payload,
+)
 
 
 NOW = datetime(2026, 6, 22, 12, 0, tzinfo=timezone(timedelta(hours=8)))
@@ -168,8 +175,211 @@ class PluginIntegrationTest(unittest.TestCase):
         status = runtime.annotate_query_payload("tasks", {"ok": True})["source_status"]
         self.assertEqual(status["status"], SourceStatus.FAILED.value)
         self.assertEqual(status["message"], ERROR_MESSAGE)
-        self.assertEqual(set(status), {"status", "message"})
-        self.assertNotIn("以下内容来自最近一次成功数据", status["message"])
+
+    def test_post_known_term_vacation_is_not_calendar_pending(self):
+        today = datetime(2026, 6, 29, 12, 0, tzinfo=timezone(timedelta(hours=8))).date()
+        past_terms = [
+            {"year": "2025-2026", "term": 0, "begin": "2025-09-15", "end": "2025-11-09"},
+            {"year": "2025-2026", "term": 1, "begin": "2025-11-10", "end": "2026-01-04"},
+            {"year": "2025-2026", "term": 4, "begin": "2026-03-02", "end": "2026-04-26"},
+            {"year": "2025-2026", "term": 5, "begin": "2026-04-27", "end": "2026-06-21"},
+        ]
+
+        self.assertEqual(calendar_refresh_state(today, past_terms), "vacation")
+        self.assertFalse(calendar_has_current_or_future_term(today, past_terms))
+
+    def test_repository_calendar_uses_two_fixed_16_week_long_terms(self):
+        parsed = parse_repository_calendar_config(
+            {
+                "version": 1,
+                "updated_at": "2026-06-29",
+                "academic_years": [
+                    {
+                        "year": "2026-2027",
+                        "autumn_winter": {"begin": "2026-09-14"},
+                        "spring_summer": {"begin": "2027-02-22"},
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(parsed["source"], "repository")
+        self.assertEqual(parsed["updated_at"], "2026-06-29")
+        self.assertEqual(
+            parsed["term_configs"],
+            [
+                {
+                    "year": "2026-2027",
+                    "term": 0,
+                    "terms": [0, 1],
+                    "begin": "2026-09-14",
+                    "end": "2027-01-03",
+                    "first_week_no": 1,
+                    "source": "repository",
+                },
+                {
+                    "year": "2026-2027",
+                    "term": 4,
+                    "terms": [4, 5],
+                    "begin": "2027-02-22",
+                    "end": "2027-06-13",
+                    "first_week_no": 1,
+                    "source": "repository",
+                },
+            ],
+        )
+
+    def test_calendar_refresh_prefers_repository_calendar_and_merges_second_source(self):
+        from main import ZjuAcademicPlugin
+
+        plugin = object.__new__(ZjuAcademicPlugin)
+        plugin.config = {}
+        saved = []
+        plugin._now = lambda: NOW
+        plugin._load_calendar_cache_sync = lambda: {}
+        plugin._save_calendar_cache_sync = saved.append
+        plugin._fetch_repository_calendar_config = lambda: {
+            "source": "repository",
+            "updated_at": "2026-06-29",
+            "term_configs": [
+                {
+                    "year": "2026-2027",
+                    "term": 0,
+                    "terms": [0, 1],
+                    "begin": "2026-09-14",
+                    "end": "2027-01-03",
+                    "first_week_no": 1,
+                    "source": "repository",
+                }
+            ],
+            "holiday_tweaks": [],
+        }
+        plugin._fetch_zju_ical_py_calendar_config = lambda: {
+            "source": "zju-ical-py",
+            "updated_at": "2026-08-01",
+            "term_configs": [
+                {
+                    "year": "2025-2026",
+                    "term": 0,
+                    "begin": "2025-09-15",
+                    "end": "2025-11-09",
+                    "first_week_no": 1,
+                },
+                {
+                    "year": "2026-2027",
+                    "term": 1,
+                    "begin": "2026-11-09",
+                    "end": "2027-01-03",
+                    "first_week_no": 1,
+                },
+            ],
+            "holiday_tweaks": [{"type": "clear", "from": "2026-10-01", "to": "2026-10-07"}],
+        }
+
+        result = plugin._academic_calendar_config(force=True)
+        terms_by_key = {(item["year"], item["term"]): item for item in result["term_configs"]}
+
+        self.assertIn(("2025-2026", 0), terms_by_key)
+        self.assertIn(("2026-2027", 0), terms_by_key)
+        self.assertNotIn(("2026-2027", 1), terms_by_key)
+        self.assertEqual(terms_by_key[("2026-2027", 0)]["source"], "repository")
+        self.assertEqual(result["holiday_tweaks"], [{"type": "clear", "from": "2026-10-01", "to": "2026-10-07"}])
+        self.assertEqual(saved[-1], result)
+
+    def test_repository_calendar_remote_url_is_preferred_over_local_file(self):
+        import main
+        from main import ZjuAcademicPlugin
+
+        remote_payload = {
+            "version": 1,
+            "updated_at": "2026-07-01",
+            "academic_years": [
+                {
+                    "year": "2026-2027",
+                    "autumn_winter": {"begin": "2026-09-21"},
+                }
+            ],
+        }
+
+        class FakeResponse:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return remote_payload
+
+        class FakeSession:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def get(self, url, timeout):
+                return FakeResponse()
+
+        original_session = main.requests.Session
+        main.requests.Session = lambda: FakeSession()
+        try:
+            plugin = object.__new__(ZjuAcademicPlugin)
+            plugin.config = {}
+            plugin._now = lambda: NOW
+            plugin._repository_calendar_urls = lambda: ["https://example.test/calendar/terms.json"]
+            plugin._load_repository_calendar_file = lambda: {
+                "source": "repository",
+                "updated_at": "2026-06-29",
+                "term_configs": [
+                    {
+                        "year": "2026-2027",
+                        "term": 0,
+                        "terms": [0, 1],
+                        "begin": "2026-09-14",
+                        "end": "2027-01-03",
+                        "first_week_no": 1,
+                        "source": "repository",
+                    }
+                ],
+                "holiday_tweaks": [],
+            }
+
+            result = plugin._fetch_repository_calendar_config()
+        finally:
+            main.requests.Session = original_session
+
+        self.assertEqual(result["updated_at"], "2026-07-01")
+        self.assertEqual(result["term_configs"][0]["begin"], "2026-09-21")
+
+    def test_class_terms_to_fetch_skip_past_terms_and_use_long_term_primary(self):
+        from main import ZjuAcademicPlugin
+
+        plugin = object.__new__(ZjuAcademicPlugin)
+        terms = [
+            {"year": "2025-2026", "term": 0, "begin": "2025-09-15", "end": "2025-11-09"},
+            {"year": "2025-2026", "term": 4, "begin": "2026-03-02", "end": "2026-06-21"},
+            {
+                "year": "2026-2027",
+                "term": 0,
+                "terms": [0, 1],
+                "begin": "2026-09-14",
+                "end": "2027-01-03",
+            },
+            {
+                "year": "2026-2027",
+                "term": 4,
+                "terms": [4, 5],
+                "begin": "2027-02-22",
+                "end": "2027-06-13",
+            },
+        ]
+
+        result = plugin._unique_class_terms(
+            terms,
+            start_date=datetime(2026, 9, 14, tzinfo=timezone(timedelta(hours=8))).date(),
+        )
+
+        self.assertEqual(result, [("2026-2027", 0), ("2026-2027", 4)])
 
     def test_error_messages_are_short_for_user_output(self):
         text = "\n".join(

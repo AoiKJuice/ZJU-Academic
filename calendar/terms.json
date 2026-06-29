@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "updated_at": "2026-06-29",
+  "academic_years": [
+    {
+      "year": "2026-2027",
+      "autumn_winter": {
+        "begin": "2026-09-14",
+        "first_week_no": 1
+      },
+      "spring_summer": {
+        "begin": "2027-02-22",
+        "first_week_no": 1
+      }
+    }
+  ],
+  "holiday_tweaks": []
+}

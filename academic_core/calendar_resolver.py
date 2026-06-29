@@ -109,7 +109,7 @@ class CalendarResolver:
                 current_term=current_term,
                 next_term=next_term,
             )
-        if next_term is not None:
+        if ordered:
             return CalendarState(status="vacation", current_term=None, next_term=next_term)
         return CalendarState(status="calendar_pending", current_term=None, next_term=None)
 

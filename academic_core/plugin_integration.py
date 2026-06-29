@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 import copy
-from datetime import datetime
+import re
+from datetime import date, datetime, timedelta
 from typing import Any, Awaitable, Callable
 
 from .messages import NEXT_TERM_CALENDAR_PENDING_MESSAGE, SOURCE_TEMPORARILY_UNAVAILABLE_MESSAGE
 from .models import SourceHealth, SourceStatus, migrate_cache
 from .refresh_coordinator import Fetcher, RefreshCoordinator, RefreshResult, SourceTransition
+
+
+ACADEMIC_YEAR_RE = re.compile(r"^\d{4}-\d{4}$")
+REPOSITORY_LONG_TERM_WEEKS = 16
+REPOSITORY_LONG_TERMS = (
+    ("autumn_winter", 0, [0, 1]),
+    ("spring_summer", 4, [4, 5]),
+)
 
 
 class AcademicPluginRuntime:
@@ -77,6 +86,119 @@ def source_status_payload(cache: dict[str, Any], source: str) -> dict[str, Any] 
         "status": health.status.value,
         "message": message,
     }
+
+
+def calendar_refresh_state(today: date | str, term_configs: list[dict[str, Any]]) -> str:
+    current_date = _coerce_date(today)
+    parsed_terms = _parse_term_ranges(term_configs)
+    if not parsed_terms:
+        return "calendar_pending"
+    if any(begin <= current_date <= end for begin, end in parsed_terms):
+        return "active"
+    return "vacation"
+
+
+def calendar_has_current_or_future_term(today: date | str, term_configs: list[dict[str, Any]]) -> bool:
+    current_date = _coerce_date(today)
+    return any(end >= current_date for _, end in _parse_term_ranges(term_configs))
+
+
+def parse_repository_calendar_config(payload: dict[str, Any]) -> dict[str, Any]:
+    result = {
+        "source": "repository",
+        "updated_at": str(payload.get("updated_at") or "").strip() if isinstance(payload, dict) else "",
+        "term_configs": [],
+        "holiday_tweaks": _parse_repository_holiday_tweaks(payload.get("holiday_tweaks", []))
+        if isinstance(payload, dict)
+        else [],
+    }
+    if not isinstance(payload, dict):
+        return result
+
+    term_configs: list[dict[str, Any]] = []
+    for academic_year in payload.get("academic_years", []):
+        if not isinstance(academic_year, dict):
+            continue
+        year = str(academic_year.get("year") or "").strip()
+        if not _valid_academic_year(year):
+            continue
+        for key, primary_term, term_ids in REPOSITORY_LONG_TERMS:
+            raw_term = academic_year.get(key)
+            if not isinstance(raw_term, dict):
+                continue
+            try:
+                begin = _coerce_date(raw_term.get("begin", ""))
+            except Exception:
+                continue
+            end = begin + timedelta(weeks=REPOSITORY_LONG_TERM_WEEKS) - timedelta(days=1)
+            try:
+                first_week_no = int(raw_term.get("first_week_no") or 1)
+            except Exception:
+                first_week_no = 1
+            if first_week_no < 1:
+                first_week_no = 1
+            term_configs.append(
+                {
+                    "year": year,
+                    "term": primary_term,
+                    "terms": list(term_ids),
+                    "begin": begin.isoformat(),
+                    "end": end.isoformat(),
+                    "first_week_no": first_week_no,
+                    "source": "repository",
+                }
+            )
+
+    result["term_configs"] = sorted(term_configs, key=lambda item: (item["begin"], item["term"]))
+    return result
+
+
+def _parse_repository_holiday_tweaks(raw_items: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_items, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        tweak_type = str(item.get("type") or "").strip()
+        from_text = str(item.get("from") or "").strip()
+        to_text = str(item.get("to") or "").strip()
+        if not tweak_type or not from_text or not to_text:
+            continue
+        try:
+            _coerce_date(from_text)
+            _coerce_date(to_text)
+        except Exception:
+            continue
+        result.append({"type": tweak_type, "from": from_text, "to": to_text})
+    return result
+
+
+def _parse_term_ranges(term_configs: list[dict[str, Any]]) -> list[tuple[date, date]]:
+    parsed_terms: list[tuple[date, date]] = []
+    for item in term_configs:
+        try:
+            begin = _coerce_date(item["begin"])
+            end = _coerce_date(item["end"])
+        except Exception:
+            continue
+        parsed_terms.append((begin, end))
+    return sorted(parsed_terms, key=lambda item: item[0])
+
+
+def _coerce_date(value: date | str) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value))
+
+
+def _valid_academic_year(value: str) -> bool:
+    if not ACADEMIC_YEAR_RE.match(value):
+        return False
+    start_text, end_text = value.split("-", 1)
+    return int(end_text) == int(start_text) + 1
 
 
 async def run_background_tick(

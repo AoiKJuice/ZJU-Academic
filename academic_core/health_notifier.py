@@ -19,6 +19,10 @@ class HealthNotification:
 
 class HealthNotifier:
     DAILY_INTERVAL = timedelta(hours=24)
+    FAILED_FIRST_NOTIFICATION_FAILURES = 3
+    FAILED_FIRST_NOTIFICATION_AGE = timedelta(minutes=30)
+    FAILED_REPEAT_INTERVAL = timedelta(hours=72)
+    WAITING_CALENDAR_REPEAT_INTERVAL = timedelta(days=7)
 
     def __init__(self, source: str, source_label: str | None = None):
         self.source = source
@@ -52,10 +56,6 @@ class HealthNotifier:
         if after.status not in (SourceStatus.FAILED, SourceStatus.WAITING_CALENDAR):
             return []
 
-        new_incident = (
-            before.status != after.status
-            or before.last_error_code != after.last_error_code
-        )
         notifications: list[HealthNotification] = []
         for recipient in unique_recipients:
             delivery = after.notification_deliveries.get(recipient, {})
@@ -64,9 +64,10 @@ class HealthNotifier:
                 and delivery.get("status") == after.status.value
                 and delivery.get("error_code") == after.last_error_code
             )
-            if same_incident and not self._delivery_is_daily_due(delivery, now):
-                continue
-            if not new_incident and same_incident and not self._delivery_is_daily_due(delivery, now):
+            if same_incident:
+                if not self._delivery_is_due(delivery, now, self._problem_repeat_interval(after)):
+                    continue
+            elif not self._problem_is_ready(after, now):
                 continue
             notifications.append(
                 HealthNotification(
@@ -100,9 +101,9 @@ class HealthNotifier:
         delivery = health.notification_deliveries.get(recipient, {})
         if delivery.get("kind") != kind:
             return False
-        return not self._delivery_is_daily_due(delivery, now)
+        return not self._delivery_is_due(delivery, now, self.DAILY_INTERVAL)
 
-    def _delivery_is_daily_due(self, delivery: dict[str, str], now: datetime) -> bool:
+    def _delivery_is_due(self, delivery: dict[str, str], now: datetime, interval: timedelta) -> bool:
         sent_at = delivery.get("sent_at", "")
         if not sent_at:
             return True
@@ -110,7 +111,25 @@ class HealthNotifier:
             last_sent = datetime.fromisoformat(sent_at)
         except ValueError:
             return True
-        return now - last_sent >= self.DAILY_INTERVAL
+        return now - last_sent >= interval
+
+    def _problem_is_ready(self, health: SourceHealth, now: datetime) -> bool:
+        if health.status == SourceStatus.WAITING_CALENDAR:
+            return True
+        if health.consecutive_failures >= self.FAILED_FIRST_NOTIFICATION_FAILURES:
+            return True
+        if not health.failure_started_at:
+            return False
+        try:
+            failure_started_at = datetime.fromisoformat(health.failure_started_at)
+        except ValueError:
+            return False
+        return now - failure_started_at >= self.FAILED_FIRST_NOTIFICATION_AGE
+
+    def _problem_repeat_interval(self, health: SourceHealth) -> timedelta:
+        if health.status == SourceStatus.WAITING_CALENDAR:
+            return self.WAITING_CALENDAR_REPEAT_INTERVAL
+        return self.FAILED_REPEAT_INTERVAL
 
     def _problem_text(self, health: SourceHealth) -> str:
         if health.status == SourceStatus.WAITING_CALENDAR:

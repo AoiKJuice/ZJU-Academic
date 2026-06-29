@@ -41,7 +41,12 @@ try:
         QUERY_DENIED_MESSAGE,
     )
     from .academic_core.models import SourceHealth, SourceResult, SourceStatus, migrate_cache
-    from .academic_core.plugin_integration import source_status_payload
+    from .academic_core.plugin_integration import (
+        calendar_has_current_or_future_term,
+        calendar_refresh_state,
+        parse_repository_calendar_config,
+        source_status_payload,
+    )
     from .academic_core.refresh_coordinator import RefreshCoordinator
     from .academic_core.zdbk_client import ZdbkClient
 except ImportError:
@@ -62,7 +67,12 @@ except ImportError:
         QUERY_DENIED_MESSAGE,
     )
     from academic_core.models import SourceHealth, SourceResult, SourceStatus, migrate_cache
-    from academic_core.plugin_integration import source_status_payload
+    from academic_core.plugin_integration import (
+        calendar_has_current_or_future_term,
+        calendar_refresh_state,
+        parse_repository_calendar_config,
+        source_status_payload,
+    )
     from academic_core.refresh_coordinator import RefreshCoordinator
     from academic_core.zdbk_client import ZdbkClient
 
@@ -93,6 +103,9 @@ TERM_NAME_TO_ID = {
 ZJU_ICAL_PY_CONFIG_BASE_URLS = (
     "https://cdn.jsdelivr.net/gh/Xecades/zju-ical-py@main/configs",
     "https://raw.githubusercontent.com/Xecades/zju-ical-py/main/configs",
+)
+REPOSITORY_CALENDAR_URLS = (
+    "https://raw.githubusercontent.com/AoiKJuice/ZJU-Academic/main/calendar/terms.json",
 )
 ZJU_ICAL_PY_CONFIG_TIMEOUT_SECONDS = 3
 ZJU_ICAL_PY_CONFIG_CACHE_SECONDS = 12 * 60 * 60
@@ -1129,7 +1142,8 @@ class ZjuAcademicPlugin(Star):
                     now = self._now()
                     config = calendar_config()
                     term_configs = config.get("term_configs", [])
-                    if self._calendar_refresh_state(term_configs) == "calendar_pending":
+                    calendar_state = self._calendar_refresh_state(term_configs)
+                    if calendar_state == "calendar_pending":
                         return SourceResult(
                             data={
                                 "templates": cache.get("source_data", {}).get("schedule_templates", []),
@@ -1140,12 +1154,20 @@ class ZjuAcademicPlugin(Star):
                                 "message": NEXT_TERM_CALENDAR_PENDING_MESSAGE,
                             },
                         )
+                    if calendar_state == "vacation" and not self._calendar_has_current_or_future_term(term_configs):
+                        templates = cache.get("source_data", {}).get("schedule_templates", [])
+                        schedule_start = now.date() - timedelta(days=now.date().weekday())
+                        refresh_meta["class_events_from"] = schedule_start.isoformat()
+                        raw_counts["class_templates"] = len(templates) if isinstance(templates, list) else 0
+                        raw_counts["calendar_source"] = config.get("source", "")
+                        raw_counts["calendar_updated_at"] = config.get("updated_at", "")
+                        return SourceResult(data={"templates": templates if isinstance(templates, list) else [], "events": []})
 
+                    schedule_start = now.date() - timedelta(days=now.date().weekday())
                     client = zju_client()
                     classes: list[dict[str, Any]] = []
-                    for academic_year, term in self._unique_class_terms(term_configs):
+                    for academic_year, term in self._unique_class_terms(term_configs, start_date=schedule_start):
                         classes.extend(client.get_classes(academic_year, term))
-                    schedule_start = now.date() - timedelta(days=now.date().weekday())
                     class_events = self._expand_class_events(
                         classes,
                         term_configs,
@@ -1222,23 +1244,10 @@ class ZjuAcademicPlugin(Star):
             return True
 
     def _calendar_refresh_state(self, term_configs: list[dict[str, Any]]) -> str:
-        today = self._now().date()
-        parsed_terms: list[tuple[date, date]] = []
-        for item in term_configs:
-            try:
-                begin = self._parse_date(item["begin"])
-                end = self._parse_date(item["end"])
-            except Exception:
-                continue
-            parsed_terms.append((begin, end))
-        if not parsed_terms:
-            return "calendar_pending"
-        parsed_terms.sort(key=lambda item: item[0])
-        if any(begin <= today <= end for begin, end in parsed_terms):
-            return "active"
-        if any(begin > today for begin, _ in parsed_terms):
-            return "vacation"
-        return "calendar_pending"
+        return calendar_refresh_state(self._now().date(), term_configs)
+
+    def _calendar_has_current_or_future_term(self, term_configs: list[dict[str, Any]]) -> bool:
+        return calendar_has_current_or_future_term(self._now().date(), term_configs)
 
     def _filter_task_horizon(self, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         now = self._now()
@@ -1368,6 +1377,7 @@ class ZjuAcademicPlugin(Star):
             end = self._parse_date(term_config["end"])
             if end < today or begin > end_day:
                 continue
+            term_ids = set(self._term_config_terms(term_config))
             shadow_dates = self._build_shadow_dates(begin, end, tweaks)
             monday_of_first_week = self._monday_of_first_week(begin, int(term_config.get("first_week_no", 1) or 1))
             for actual_day, class_day in shadow_dates.items():
@@ -1379,7 +1389,7 @@ class ZjuAcademicPlugin(Star):
                 for item in classes:
                     if weekday != item["day_number"]:
                         continue
-                    if int(term_config["term"]) not in item["term_arrangements"]:
+                    if not term_ids.intersection(item["term_arrangements"]):
                         continue
                     week_numbers = item.get("week_numbers") or []
                     if week_numbers and week_number not in week_numbers:
@@ -2881,11 +2891,20 @@ class ZjuAcademicPlugin(Star):
         manual = self._manual_calendar_config()
         if self._cfg_bool("auto_calendar_enabled", True):
             cached = self._load_calendar_cache_sync()
-            if not force and self._is_calendar_cache_fresh(cached):
+            if (
+                not force
+                and self._is_calendar_cache_fresh(cached)
+                and self._calendar_has_current_or_future_term(cached.get("term_configs", []))
+            ):
                 cached = dict(cached)
                 cached["source"] = f"{cached.get('source', 'zju-ical-py')} cache"
                 return cached
-            fetched = self._fetch_zju_ical_py_calendar_config()
+            repository = self._fetch_repository_calendar_config()
+            zju_ical = self._fetch_zju_ical_py_calendar_config()
+            if repository.get("term_configs"):
+                fetched = self._merge_calendar_configs(repository, zju_ical)
+            else:
+                fetched = zju_ical
             if fetched.get("term_configs"):
                 self._save_calendar_cache_sync(fetched)
                 return fetched
@@ -2920,21 +2939,85 @@ class ZjuAcademicPlugin(Star):
         if not fallback.get("term_configs"):
             return dict(primary)
         merged = dict(primary)
-        term_configs_by_key = {
-            (item["year"], int(item["term"])): dict(item)
-            for item in primary.get("term_configs", [])
-        }
-        added_manual = False
+        term_configs_by_key: dict[tuple[str, int], dict[str, Any]] = {}
+        covered_keys: set[tuple[str, int]] = set()
+        for item in primary.get("term_configs", []):
+            key = (item["year"], int(item["term"]))
+            term_configs_by_key[key] = dict(item)
+            for term in self._term_config_terms(item):
+                covered_keys.add((item["year"], term))
+
+        added_fallback = False
         for item in fallback.get("term_configs", []):
             key = (item["year"], int(item["term"]))
-            if key not in term_configs_by_key:
+            if key not in covered_keys:
                 term_configs_by_key[key] = dict(item)
-                added_manual = True
+                added_fallback = True
+                for term in self._term_config_terms(item):
+                    covered_keys.add((item["year"], term))
         merged["term_configs"] = sorted(term_configs_by_key.values(), key=lambda x: (x["begin"], x["term"]))
-        merged["holiday_tweaks"] = list(primary.get("holiday_tweaks", []))
-        if added_manual:
-            merged["source"] = f"{primary.get('source', 'calendar')}+manual"
+        merged["holiday_tweaks"] = list(primary.get("holiday_tweaks") or fallback.get("holiday_tweaks", []))
+        if added_fallback:
+            merged["source"] = f"{primary.get('source', 'calendar')}+{fallback.get('source', 'calendar')}"
         return merged
+
+    def _term_config_terms(self, term_config: dict[str, Any]) -> list[int]:
+        values: list[int] = []
+        raw_terms = term_config.get("terms")
+        if isinstance(raw_terms, list):
+            for item in raw_terms:
+                try:
+                    values.append(int(item))
+                except Exception:
+                    continue
+        try:
+            primary = int(term_config["term"])
+        except Exception:
+            return sorted(set(values))
+        if primary not in values:
+            values.insert(0, primary)
+        return sorted(set(values))
+
+    def _fetch_repository_calendar_config(self) -> dict[str, Any]:
+        with requests.Session() as session:
+            for url in self._repository_calendar_urls():
+                try:
+                    resp = session.get(url, timeout=ZJU_ICAL_PY_CONFIG_TIMEOUT_SECONDS)
+                    if resp.status_code == 404:
+                        continue
+                    resp.raise_for_status()
+                    payload = resp.json()
+                    parsed = parse_repository_calendar_config(payload)
+                    if parsed.get("term_configs"):
+                        parsed["fetched_at"] = self._now().isoformat()
+                        return parsed
+                except Exception:
+                    logger.warning(f"failed to fetch repository calendar config: {url}", exc_info=True)
+        local = self._load_repository_calendar_file()
+        if local.get("term_configs"):
+            local["fetched_at"] = self._now().isoformat()
+            return local
+        return {"source": "repository", "updated_at": "", "term_configs": [], "holiday_tweaks": []}
+
+    def _repository_calendar_urls(self) -> list[str]:
+        configured = self._cfg_str("repository_calendar_url", "")
+        result: list[str] = []
+        for item in (configured, *REPOSITORY_CALENDAR_URLS):
+            url = str(item or "").strip()
+            if url and url not in result:
+                result.append(url)
+        return result
+
+    def _load_repository_calendar_file(self) -> dict[str, Any]:
+        path = Path(__file__).resolve().parent / "calendar" / "terms.json"
+        if not path.exists():
+            return {"source": "repository", "updated_at": "", "term_configs": [], "holiday_tweaks": []}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+            return parse_repository_calendar_config(payload)
+        except Exception:
+            logger.warning(f"failed to load repository calendar config: {path}", exc_info=True)
+            return {"source": "repository", "updated_at": "", "term_configs": [], "holiday_tweaks": []}
 
     def _fetch_zju_ical_py_calendar_config(self) -> dict[str, Any]:
         term_configs_by_key: dict[tuple[str, int], dict[str, Any]] = {}
@@ -3137,8 +3220,26 @@ class ZjuAcademicPlugin(Star):
     def _format_offsets(self, values: list[int]) -> str:
         return ", ".join(f"{item} 分钟" for item in values) if values else "无"
 
-    def _unique_class_terms(self, term_configs: list[dict[str, Any]]) -> list[tuple[str, int]]:
-        result = {(item["year"], int(item["term"])) for item in term_configs if int(item["term"]) in TERM_LABELS}
+    def _unique_class_terms(
+        self,
+        term_configs: list[dict[str, Any]],
+        start_date: date | None = None,
+    ) -> list[tuple[str, int]]:
+        result = set()
+        for item in term_configs:
+            try:
+                term = int(item["term"])
+            except Exception:
+                continue
+            if term not in TERM_LABELS:
+                continue
+            if start_date is not None:
+                try:
+                    if self._parse_date(str(item.get("end") or "")) < start_date:
+                        continue
+                except Exception:
+                    continue
+            result.add((item["year"], term))
         return sorted(result, key=lambda x: (x[0], x[1]))
 
     def _unique_exam_terms(self, term_configs: list[dict[str, Any]]) -> list[tuple[str, int]]:

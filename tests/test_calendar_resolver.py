@@ -71,7 +71,7 @@ class CalendarResolverTest(unittest.TestCase):
         ).terms
         self.assertEqual(
             self.resolver.state_on("2026-07-20", known_without_next).status,
-            "calendar_pending",
+            "vacation",
         )
 
     def test_manual_terms_only_fill_missing_terms(self):
